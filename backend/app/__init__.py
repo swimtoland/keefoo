@@ -1,0 +1,1 @@
+"""KeeFoo FastAPI application package."""
