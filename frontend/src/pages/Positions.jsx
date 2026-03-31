@@ -16,6 +16,8 @@ import {
   getPositions,
   getScenarioPushes,
   getTrades,
+  getFundRealtime,
+  getStockRealtime,
 } from '../api'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useUiPreferences } from '../contexts/UiPreferencesContext.jsx'
@@ -128,6 +130,9 @@ export default function Positions() {
   const [statusFilter, setStatusFilter] = useState('all') // all | open | closed
   const [expandedAssetId, setExpandedAssetId] = useState(null)
   const [showAllTradesByAsset, setShowAllTradesByAsset] = useState({})
+
+  const [rtByCode, setRtByCode] = useState({})
+  const rtByCodeRef = useRef({})
 
   const rafRef = useRef(0)
   const [countUp, setCountUp] = useState({
@@ -242,6 +247,16 @@ export default function Positions() {
         const baseValue = Math.max(0, Number(x.netQty) * Number(x.avgPrice))
         const pnlPct = baseValue > 0 ? pnl / baseValue : 0
 
+        const code = String(x.asset?.code || '').trim()
+        const rt = code ? rtByCodeRef.current[code] : null
+        const rtPrice = Number(rt?.price ?? rt?.nav)
+        const hasRt = Number.isFinite(rtPrice) && rtPrice > 0
+        const currentValue = hasRt ? Math.max(0, Number(x.netQty) * rtPrice) : null
+        const floatingPnl =
+          hasRt && Number.isFinite(Number(x.avgPrice)) ? (rtPrice - Number(x.avgPrice)) * Number(x.netQty) : null
+        const floatingPnlPct =
+          hasRt && Number.isFinite(Number(x.avgPrice)) && Number(x.avgPrice) > 0 ? (rtPrice - Number(x.avgPrice)) / Number(x.avgPrice) : null
+
         return {
           ...x,
           assetId: aid,
@@ -250,6 +265,11 @@ export default function Positions() {
           pnl,
           pnlPct,
           baseValue,
+          rt,
+          rtPrice: hasRt ? rtPrice : null,
+          currentValue,
+          floatingPnl,
+          floatingPnlPct,
         }
       })
       .filter((x) => {
@@ -265,6 +285,62 @@ export default function Positions() {
 
     return rows
   }, [real, statusFilter, tradeByAssetId, trades])
+
+  useEffect(() => {
+    if (!assetCards || assetCards.length === 0) return
+    let cancelled = false
+
+    const targets = assetCards
+      .map((x) => {
+        const code = String(x.asset?.code || '').trim()
+        const type = String(x.asset?.asset_type || 'stock')
+        return code ? { code, type } : null
+      })
+      .filter(Boolean)
+
+    const uniq = []
+    const seen = new Set()
+    for (const t of targets) {
+      const k = `${t.type}:${t.code}`
+      if (seen.has(k)) continue
+      seen.add(k)
+      uniq.push(t)
+    }
+
+    async function refresh(silent = false) {
+      try {
+        const settled = await Promise.all(
+          uniq.map(async (t) => {
+            try {
+              const data = t.type === 'fund' ? await getFundRealtime(t.code) : await getStockRealtime(t.code)
+              return { code: t.code, data }
+            } catch {
+              return { code: t.code, data: null }
+            }
+          }),
+        )
+        if (cancelled) return
+        const next = { ...(rtByCodeRef.current || {}) }
+        for (const s of settled) {
+          if (s.data != null) next[s.code] = s.data
+          else if (!(s.code in next)) next[s.code] = null
+        }
+        rtByCodeRef.current = next
+        setRtByCode(next)
+      } catch {
+        // keep last
+        if (!cancelled) setRtByCode(rtByCodeRef.current || {})
+      }
+    }
+
+    refresh(true)
+    const id = window.setInterval(() => refresh(true), 30 * 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assetCards.map((x) => x.asset?.code).join('|')])
 
   const totals = useMemo(() => {
     const totalAsset = real.reduce((acc, row) => {
@@ -623,11 +699,16 @@ export default function Positions() {
               const isClosed = x.status === 'closed'
               const bgCls = isClosed ? 'bg-[#FAFAFA] dark:bg-zinc-900/60' : 'bg-white dark:bg-zinc-900'
               const opacityCls = isClosed ? 'opacity-85' : 'opacity-100'
-              const pnlColor = x.pnl >= 0 ? GREEN : RED
               const qtyText = Number.isFinite(Number(x.netQty)) ? Number(x.netQty).toLocaleString('zh-CN') : '—'
               const avgText = x.avgPrice ? Number(x.avgPrice).toFixed(3) : '—'
-              const mv = x.baseValue
+              const mv = x.currentValue != null ? x.currentValue : x.baseValue
               const mvText = `¥ ${money(mv)}`
+              const floatPnl = x.floatingPnl
+              const floatPnlPct = x.floatingPnlPct
+              const showRt = x.rtPrice != null && x.currentValue != null && floatPnl != null
+              const displayPnl = !isClosed && showRt ? floatPnl : x.pnl
+              const displayPnlPct = !isClosed && showRt ? floatPnlPct : x.pnlPct
+              const pnlColor = Number(displayPnl) >= 0 ? GREEN : RED
               const showAll = Boolean(showAllTradesByAsset[aid])
               const list = x.trades || []
               const shownTrades = showAll ? list : list.slice(0, list.length > 5 ? 3 : 5)
@@ -669,17 +750,22 @@ export default function Positions() {
                             {qtyText} × 均价 {avgText}
                           </span>
                           <span className="font-mono tabular-nums">市值 {mvText}</span>
+                          {!isClosed && (
+                            <span className="font-mono tabular-nums text-[#999] dark:text-zinc-500">
+                              {x.rtPrice != null ? `现价 ${Number(x.rtPrice).toFixed(2)}` : '行情暂不可用'}
+                            </span>
+                          )}
                         </div>
                       </div>
 
                       <div className="flex shrink-0 items-center gap-4">
                         <div className="text-right">
                           <div className="font-mono text-[14px] font-semibold tabular-nums" style={{ color: pnlColor }}>
-                            {x.pnl >= 0 ? '+' : '-'}¥ {money(Math.abs(x.pnl))}
+                            {displayPnl >= 0 ? '+' : '-'}¥ {money(Math.abs(displayPnl))}
                           </div>
                           <div className="font-mono text-[12px] font-semibold tabular-nums" style={{ color: pnlColor }}>
-                            {x.pnlPct >= 0 ? '+' : '-'}
-                            {pct(Math.abs(x.pnlPct))}
+                            {Number(displayPnlPct) >= 0 ? '+' : '-'}
+                            {pct(Math.abs(Number(displayPnlPct) || 0))}
                           </div>
                         </div>
                         <div

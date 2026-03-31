@@ -23,7 +23,16 @@ import remarkGfm from 'remark-gfm'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useUiPreferences } from '../contexts/UiPreferencesContext.jsx'
 import { useToast } from '../components/Toast.jsx'
-import { createNote, getNote, getNotes, getTags, searchAssets, updateNote } from '../api'
+import {
+  createNote,
+  getNote,
+  getNotes,
+  getStockKline,
+  getStockRealtime,
+  getTags,
+  searchAssets,
+  updateNote,
+} from '../api'
 
 function cx(...parts) {
   return parts.filter(Boolean).join(' ')
@@ -131,25 +140,21 @@ export default function Chart() {
   // chart
   const chartContainerRef = useRef(null)
   const chartRef = useRef(null)
-  const [crosshair, setCrosshair] = useState(null)
+  const candleSeriesRef = useRef(null)
+  const volumeSeriesRef = useRef(null)
 
   const [assetQuery, setAssetQuery] = useState('')
   const [assetResults, setAssetResults] = useState([])
   const [selectedAsset, setSelectedAsset] = useState(null)
 
-  const candlesSeedKey = useMemo(() => selectedAsset?.id || 'mock', [selectedAsset])
-  const mock = useMemo(() => generateCandles(candlesSeedKey, 120), [candlesSeedKey])
-  const ohlcvByTime = useMemo(() => {
-    const map = new Map()
-    for (const c of mock.candles) {
-      map.set(c.time, { ...c, volume: null })
-    }
-    for (const v of mock.volumes) {
-      const cur = map.get(v.time)
-      if (cur) cur.volume = v.value
-    }
-    return map
-  }, [mock])
+  const [marketCode, setMarketCode] = useState('600519')
+  const [marketName, setMarketName] = useState('贵州茅台')
+  const [period, setPeriod] = useState('daily') // daily | weekly | monthly
+  const [klineLoading, setKlineLoading] = useState(true)
+  const [kline, setKline] = useState([])
+  const [klineError, setKlineError] = useState('')
+  const [rtLoading, setRtLoading] = useState(false)
+  const [rt, setRt] = useState(null)
 
   // notes panel state
   const [isExpanded, setIsExpanded] = useState(true)
@@ -171,6 +176,13 @@ export default function Chart() {
   const [dirty, setDirty] = useState(false)
   const [autoSaveState, setAutoSaveState] = useState(t('chart.unsavedChanges'))
   const saveTimerRef = useRef(null)
+
+  useEffect(() => {
+    // default market data (even if user never selects a local asset)
+    setMarketCode('600519')
+    setMarketName('贵州茅台')
+    setPeriod('daily')
+  }, [])
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -200,6 +212,7 @@ export default function Chart() {
         layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#333' },
         grid: { vertLines: { color: '#f0f3fa' }, horzLines: { color: '#f0f3fa' } },
       })
+      chartRef.current = chart
 
       if (typeof chart.addCandlestickSeries === 'function') {
         const series = chart.addCandlestickSeries({
@@ -209,7 +222,17 @@ export default function Chart() {
           wickUpColor: '#EF4444',
           wickDownColor: '#22C55E',
         })
-        series.setData(safeMockData)
+        candleSeriesRef.current = series
+        if (typeof chart.addHistogramSeries === 'function') {
+          const vol = chart.addHistogramSeries({
+            priceFormat: { type: 'volume' },
+            priceScaleId: '',
+            scaleMargins: { top: 0.8, bottom: 0 },
+          })
+          volumeSeriesRef.current = vol
+        }
+        series.setData([])
+        if (volumeSeriesRef.current) volumeSeriesRef.current.setData([])
       } else if (typeof chart.addLineSeries === 'function') {
         const series = chart.addLineSeries({ color: '#111827', lineWidth: 2 })
         series.setData(safeMockData.map((d) => ({ time: d.time, value: d.close })))
@@ -238,8 +261,92 @@ export default function Chart() {
 
     return () => {
       if (chart) chart.remove()
+      chartRef.current = null
+      candleSeriesRef.current = null
+      volumeSeriesRef.current = null
     }
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!marketCode) return
+
+    async function refreshKline() {
+      setKlineLoading(true)
+      setKlineError('')
+      try {
+        const data = await getStockKline(marketCode, period, 120)
+        if (cancelled) return
+        const arr = Array.isArray(data) ? data : []
+        setKline(arr)
+        if (arr.length === 0) setKlineError('暂无行情数据')
+      } catch (e) {
+        if (cancelled) return
+        setKline([])
+        setKlineError('暂无行情数据')
+      } finally {
+        if (!cancelled) setKlineLoading(false)
+      }
+    }
+
+    refreshKline()
+    return () => {
+      cancelled = true
+    }
+  }, [marketCode, period])
+
+  useEffect(() => {
+    const series = candleSeriesRef.current
+    if (!series) return
+    if (!Array.isArray(kline) || kline.length === 0) return
+
+    const candleData = kline.map((item) => ({
+      time: item.date,
+      open: Number(item.open),
+      high: Number(item.high),
+      low: Number(item.low),
+      close: Number(item.close),
+    }))
+    series.setData(candleData)
+    if (volumeSeriesRef.current) {
+      const volumeData = kline.map((item) => ({
+        time: item.date,
+        value: Number(item.volume) || 0,
+        color: Number(item.close) >= Number(item.open) ? '#EF4444' : '#22C55E',
+      }))
+      volumeSeriesRef.current.setData(volumeData)
+    }
+    try {
+      chartRef.current?.timeScale?.().fitContent?.()
+    } catch {
+      // ignore
+    }
+  }, [kline])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!marketCode) return
+
+    async function refreshRt(silent = false) {
+      if (!silent) setRtLoading(true)
+      try {
+        const data = await getStockRealtime(marketCode)
+        if (cancelled) return
+        setRt(data && typeof data === 'object' ? data : null)
+      } catch {
+        if (!cancelled) setRt(null)
+      } finally {
+        if (!cancelled) setRtLoading(false)
+      }
+    }
+
+    refreshRt(true)
+    const id = window.setInterval(() => refreshRt(true), 30 * 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [marketCode])
 
   // ----- Load tags (for selector) -----
   useEffect(() => {
@@ -365,19 +472,19 @@ export default function Chart() {
     setDirty(true)
   }
 
-  const metaMock = useMemo(() => {
-    const base = 80 + (hashString(selectedAsset?.id || 'mock') % 120)
-    const changePct = ((hashString(selectedAsset?.name || 'x') % 3100) / 100) - 15
-    const up = changePct >= 0
+  const rtView = useMemo(() => {
+    if (!rt || typeof rt !== 'object') return null
+    const price = Number(rt.price)
+    const changePct = Number(rt.change_pct)
     return {
-      last: base * (1 + changePct / 100),
-      changePct,
-      vol: 1_200_000 + (hashString(String(selectedAsset?.id || 'm')) % 900_000),
-      turnover: 0.8 + ((hashString(String(selectedAsset?.code || 'm')) % 500) / 1000),
-      pe: 8 + (hashString(String(selectedAsset?.id || 'm')) % 35),
-      up,
+      price: Number.isFinite(price) ? price : null,
+      changePct: Number.isFinite(changePct) ? changePct : null,
+      up: Number.isFinite(changePct) ? changePct >= 0 : null,
+      volume: Number.isFinite(Number(rt.volume)) ? Number(rt.volume) : null,
+      turnoverRate: Number.isFinite(Number(rt.turnover_rate)) ? Number(rt.turnover_rate) : null,
+      pe: Number.isFinite(Number(rt.pe)) ? Number(rt.pe) : null,
     }
-  }, [selectedAsset])
+  }, [rt])
 
   const applyMd = (before, after = before) => {
     if (isPreviewMode) return
@@ -425,6 +532,8 @@ export default function Chart() {
                       type="button"
                       onClick={() => {
                         setSelectedAsset(a)
+                        setMarketCode(String(a.code || '').trim())
+                        setMarketName(String(a.name || '').trim() || String(a.code || '').trim())
                         setAssetQuery(`${a.name} (${a.code})`)
                         setAssetResults([])
                       }}
@@ -447,18 +556,41 @@ export default function Chart() {
               )}
             </div>
 
-            {selectedAsset?.id && (
+            {marketCode && (
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="truncate text-[13px] font-semibold text-gray-900 dark:text-gray-100">
-                    {selectedAsset.name}
+                    {marketName || selectedAsset?.name || marketCode}
                   </span>
                   <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-200">
-                    {selectedAsset.code}
+                    {marketCode}
                   </span>
-                  <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-200">
-                    {selectedAsset.asset_type}
-                  </span>
+                  {selectedAsset?.asset_type && (
+                    <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-200">
+                      {selectedAsset.asset_type}
+                    </span>
+                  )}
+                  <div className="ml-2 flex items-center gap-1">
+                    {[
+                      { key: 'daily', label: '日K' },
+                      { key: 'weekly', label: '周K' },
+                      { key: 'monthly', label: '月K' },
+                    ].map((p) => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => setPeriod(p.key)}
+                        className={cx(
+                          'rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition-colors',
+                          period === p.key
+                            ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700',
+                        )}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -468,28 +600,41 @@ export default function Chart() {
         {/* 核心修复：absolute 隔离 canvas */}
         <div className="flex-1 w-full relative">
           <div ref={chartContainerRef} className="absolute inset-0" />
+          {klineLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-white/50 text-[13px] text-gray-600 backdrop-blur-[1px] dark:bg-gray-950/40 dark:text-gray-300">
+              加载行情中...
+            </div>
+          )}
+          {!klineLoading && klineError && (
+            <div className="absolute inset-0 flex items-center justify-center bg-white/60 text-[13px] font-medium text-gray-500 backdrop-blur-[1px] dark:bg-gray-950/40 dark:text-gray-300">
+              {klineError}
+            </div>
+          )}
         </div>
 
         {/* 底部信息栏 (保持原有代码) */}
         <div className="h-8 shrink-0 border-t border-gray-100 dark:border-gray-800 flex items-center px-4 justify-between text-[11px] text-gray-500 dark:text-gray-400">
           <div className="flex items-center gap-4">
-            <span className="font-semibold text-gray-900 dark:text-gray-200">{metaMock.last.toFixed(2)}</span>
+            <span className="font-semibold text-gray-900 dark:text-gray-200">
+              {rtLoading && !rtView ? '—' : rtView?.price != null ? rtView.price.toFixed(2) : '—'}
+            </span>
             <span
               className={cx(
                 'font-semibold',
-                metaMock.up
-                  ? 'text-emerald-600 dark:text-emerald-400'
-                  : 'text-red-500 dark:text-red-400',
+                rtView?.up == null
+                  ? 'text-gray-500 dark:text-gray-400'
+                  : rtView.up
+                    ? 'text-red-500 dark:text-red-400'
+                    : 'text-emerald-600 dark:text-emerald-400',
               )}
             >
-              {metaMock.changePct >= 0 ? '+' : ''}
-              {metaMock.changePct.toFixed(2)}%
+              {rtView?.changePct == null ? '—' : `${rtView.changePct >= 0 ? '+' : ''}${rtView.changePct}%`}
             </span>
-            <span>成交量 {metaMock.vol.toLocaleString()}</span>
+            {rtView?.volume != null && <span>成交量 {rtView.volume.toLocaleString('zh-CN')}</span>}
           </div>
           <div className="flex items-center gap-4">
-            <span>换手率 {(metaMock.turnover * 100).toFixed(2)}%</span>
-            <span>市盈率 {metaMock.pe.toFixed(1)}</span>
+            {rtView?.turnoverRate != null && <span>换手率 {rtView.turnoverRate}%</span>}
+            {rtView?.pe != null && <span>市盈率 {rtView.pe.toFixed(1)}</span>}
           </div>
         </div>
       </div>

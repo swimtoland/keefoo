@@ -245,4 +245,32 @@ export function deleteReminder(reminderId) {
   return api.delete(`/reminders/${reminderId}`).then((r) => r.data)
 }
 
+// --- Market data ---
+
+export function getMarketIndices() {
+  return api.get('/market/indices').then((r) => r.data)
+}
+
+export function getStockRealtime(code) {
+  return api.get(`/market/stock/${encodeURIComponent(code)}`).then((r) => r.data)
+}
+
+export function getFundRealtime(code) {
+  return api.get(`/market/fund/${encodeURIComponent(code)}`).then((r) => r.data)
+}
+
+export function getStockKline(code, period = 'daily', count = 120) {
+  return api
+    .get(`/market/kline/${encodeURIComponent(code)}`, { params: { period, count } })
+    .then((r) => r.data)
+}
+
+export function getFinancialNews(count = 20) {
+  return api.get('/market/news', { params: { count } }).then((r) => r.data)
+}
+
+export function getStockInfo(code) {
+  return api.get(`/market/stock-info/${encodeURIComponent(code)}`).then((r) => r.data)
+}
+
 export default api

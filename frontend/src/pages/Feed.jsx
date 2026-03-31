@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bot, Inbox, Send, TrendingDown, TrendingUp } from 'lucide-react'
-import { getFeed, getPendingQuestions, markFeedRead, replyToAgent } from '../api'
+import {
+  getFeed,
+  getFinancialNews,
+  getMarketIndices,
+  getPendingQuestions,
+  markFeedRead,
+  replyToAgent,
+} from '../api'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useUiPreferences } from '../contexts/UiPreferencesContext.jsx'
 import { useToast } from '../components/Toast.jsx'
@@ -58,6 +65,11 @@ export default function Feed() {
   const replyTextareaRef = useRef({})
   const [replyingId, setReplyingId] = useState(null)
 
+  const [indices, setIndices] = useState([])
+  const indicesRef = useRef([])
+  const [news, setNews] = useState([])
+  const [expandedNews, setExpandedNews] = useState({})
+
   const loadFeed = () => {
     if (!userId) return Promise.resolve()
     setLoading(true)
@@ -91,6 +103,56 @@ export default function Feed() {
   useEffect(() => {
     loadPending()
   }, [userId])
+
+  useEffect(() => {
+    let cancelled = false
+    indicesRef.current = []
+    setIndices([])
+
+    async function refresh() {
+      try {
+        const list = await getMarketIndices()
+        const next = Array.isArray(list) ? list : []
+        if (cancelled) return
+        if (next.length > 0) {
+          indicesRef.current = next
+          setIndices(next)
+        } else {
+          setIndices(indicesRef.current || [])
+        }
+      } catch {
+        if (!cancelled) setIndices(indicesRef.current || [])
+      }
+    }
+
+    refresh()
+    const id = window.setInterval(refresh, 60 * 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function refreshNews() {
+      try {
+        const list = await getFinancialNews(10)
+        if (cancelled) return
+        setNews(Array.isArray(list) ? list : [])
+      } catch {
+        if (!cancelled) setNews([])
+      }
+    }
+
+    refreshNews()
+    const id = window.setInterval(refreshNews, 5 * 60 * 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [])
 
   async function handleSendReply(tradeId) {
     const text = (replyText[tradeId] || '').trim()
@@ -129,36 +191,18 @@ export default function Feed() {
   const hasPending = !pendingLoading && pending.length > 0
   const quickReplies = ['短线博弈', '长期价值驱动', '恐慌止损', '政策利好跟随', '趋势突破', '均值回归', '事件驱动', '仓位控制']
 
-  const tickerMock = [
-    { label: 'CSI 300', price: '3542.12', change: '+1.2%' },
-    { label: 'ChiNext', price: '1845.33', change: '-0.5%' },
-    { label: 'SSE Composite', price: '3021.40', change: '+0.3%' },
-    { label: 'NASDAQ', price: '16832.92', change: '+1.8%' },
-    { label: 'Dow Jones', price: '39212.55', change: '+0.6%' },
-    { label: 'S&P 500', price: '5178.90', change: '+0.9%' },
-    { label: 'Hang Seng', price: '16520.30', change: '-0.2%' },
-    { label: 'SSE 50', price: '2468.10', change: '+0.4%' },
-    { label: 'CSI 500', price: '5388.40', change: '-0.7%' },
-    { label: 'STAR 50', price: '812.60', change: '+0.8%' },
-    { label: 'FTSE 100', price: '7894.20', change: '+0.2%' },
-    { label: 'DAX', price: '18310.10', change: '-0.4%' },
-    { label: 'Nikkei 225', price: '39680.00', change: '+1.1%' },
-    { label: 'USD/CNY', price: '7.1865', change: '-0.1%' },
-    { label: 'Gold', price: '2176.40', change: '+0.5%' },
-  ]
-
   const changeTone = (change) => {
-    const s = String(change || '')
+    const n = Number(change)
     // China convention: up = red, down = green
-    if (s.startsWith('+')) return 'text-red-500 dark:text-red-400'
-    if (s.startsWith('-')) return 'text-emerald-600 dark:text-emerald-400'
+    if (Number.isFinite(n) && n > 0) return 'text-red-500 dark:text-red-400'
+    if (Number.isFinite(n) && n < 0) return 'text-emerald-600 dark:text-emerald-400'
     return 'text-[#888] dark:text-zinc-500'
   }
 
   const changeIcon = (change) => {
-    const s = String(change || '')
-    if (s.startsWith('+')) return TrendingUp
-    if (s.startsWith('-')) return TrendingDown
+    const n = Number(change)
+    if (Number.isFinite(n) && n > 0) return TrendingUp
+    if (Number.isFinite(n) && n < 0) return TrendingDown
     return null
   }
 
@@ -196,25 +240,37 @@ export default function Feed() {
           className="inline-flex whitespace-nowrap py-3"
           style={{ animation: 'marquee 40s linear infinite' }}
         >
-          {[...tickerMock, ...tickerMock].map((tkr, idx) => {
-            const toneCls = changeTone(tkr.change)
-            const Icon = changeIcon(tkr.change)
-            return (
-              <div key={`${tkr.label}-${idx}`} className="inline-flex items-center gap-2 px-4">
-                <span className="text-sm font-medium text-[#1A1A1A] dark:text-zinc-100">{tkr.label}</span>
-                <span className="text-sm font-semibold tabular-nums text-[#1A1A1A] dark:text-zinc-100">
-                  {tkr.price}
-                </span>
-                <span className={`inline-flex items-center gap-1.5 text-sm font-semibold ${toneCls}`}>
-                  {Icon ? <Icon className="h-4 w-4" strokeWidth={2} aria-hidden /> : null}
-                  {tkr.change}
-                </span>
-                <span className="ml-2 text-[#DDD] dark:text-zinc-700" aria-hidden>
-                  |
-                </span>
-              </div>
-            )
-          })}
+          {Array.isArray(indices) && indices.length > 0 ? (
+            [...indices, ...indices].map((idx, i) => {
+              const toneCls = changeTone(idx.change_pct)
+              const Icon = changeIcon(idx.change_pct)
+              const price = Number(idx.price)
+              const changePct = Number(idx.change_pct)
+              const changeText =
+                Number.isFinite(changePct) ? `${changePct >= 0 ? '+' : ''}${changePct}%` : '—'
+              return (
+                <div key={`${idx.code}-${i}`} className="inline-flex items-center gap-2 px-4">
+                  <span className="text-sm font-medium text-[#1A1A1A] dark:text-zinc-100">
+                    {idx.name_en || idx.name || idx.code}
+                  </span>
+                  <span className="text-sm font-semibold tabular-nums text-[#1A1A1A] dark:text-zinc-100">
+                    {Number.isFinite(price) ? price.toLocaleString('zh-CN') : '—'}
+                  </span>
+                  <span className={`inline-flex items-center gap-1.5 text-sm font-semibold ${toneCls}`}>
+                    {Icon ? <Icon className="h-4 w-4" strokeWidth={2} aria-hidden /> : null}
+                    {changeText}
+                  </span>
+                  <span className="ml-2 text-[#DDD] dark:text-zinc-700" aria-hidden>
+                    |
+                  </span>
+                </div>
+              )
+            })
+          ) : (
+            <div className="inline-flex items-center gap-2 px-4 text-sm text-[#777] dark:text-zinc-400">
+              行情数据加载中...
+            </div>
+          )}
         </div>
       </div>
 
@@ -475,6 +531,45 @@ export default function Feed() {
           </div>
         </div>
       </div>
+
+      {Array.isArray(news) && news.length > 0 && (
+        <section className="mt-10 rounded-2xl bg-white p-5 shadow-sm dark:bg-zinc-900 dark:ring-1 dark:ring-zinc-800">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-[15px] font-bold text-[#1A1A1A] dark:text-white">市场快讯</h2>
+            <span className="text-[12px] text-[#999] dark:text-zinc-500">每 5 分钟更新</span>
+          </div>
+          <ul className="space-y-3">
+            {news.map((n, i) => {
+              const key = `${n.title}-${n.publish_time}-${i}`
+              const isOpen = Boolean(expandedNews[key])
+              return (
+                <li key={key} className="rounded-xl border border-[#F0F0F0] p-4 dark:border-zinc-800">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedNews((prev) => ({ ...prev, [key]: !prev[key] }))}
+                    className="w-full text-left"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <p className="min-w-0 flex-1 text-[13px] font-semibold text-[#1A1A1A] dark:text-white">
+                        {n.title}
+                      </p>
+                      <div className="shrink-0 text-[12px] text-[#999] dark:text-zinc-500">
+                        {n.source ? `${n.source} · ` : ''}
+                        {n.publish_time || '—'}
+                      </div>
+                    </div>
+                    {isOpen && n.summary && (
+                      <p className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed text-[#666] dark:text-zinc-300">
+                        {n.summary}
+                      </p>
+                    )}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      )}
     </div>
   )
 }

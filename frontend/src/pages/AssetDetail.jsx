@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
-import { getAssetDetail } from '../api'
+import { getAssetDetail, getFundRealtime, getStockInfo, getStockRealtime } from '../api'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { useUiPreferences } from '../contexts/UiPreferencesContext.jsx'
 import { useToast } from '../components/Toast.jsx'
@@ -59,6 +59,9 @@ export default function AssetDetail() {
   const showToast = useToast()
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState(null)
+  const [rt, setRt] = useState(null)
+  const [info, setInfo] = useState(null)
+  const [rtLoading, setRtLoading] = useState(false)
 
   useEffect(() => {
     if (!assetId || !userId) return
@@ -87,6 +90,48 @@ export default function AssetDetail() {
       cancelled = true
     }
   }, [assetId, userId, showToast, tr])
+
+  useEffect(() => {
+    const asset = data?.asset
+    if (!asset?.code) return
+    let cancelled = false
+
+    async function refreshRt(silent = false) {
+      if (!silent) setRtLoading(true)
+      try {
+        const code = String(asset.code || '').trim()
+        if (!code) return
+        const res =
+          asset.asset_type === 'fund' ? await getFundRealtime(code) : await getStockRealtime(code)
+        if (cancelled) return
+        setRt(res && typeof res === 'object' ? res : null)
+      } catch {
+        if (!cancelled) setRt(null)
+      } finally {
+        if (!cancelled) setRtLoading(false)
+      }
+    }
+
+    async function loadInfo() {
+      try {
+        const code = String(asset.code || '').trim()
+        if (!code) return
+        const res = await getStockInfo(code)
+        if (cancelled) return
+        setInfo(res && typeof res === 'object' ? res : null)
+      } catch {
+        if (!cancelled) setInfo(null)
+      }
+    }
+
+    refreshRt(true)
+    loadInfo()
+    const id = window.setInterval(() => refreshRt(true), 30 * 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [data?.asset?.code, data?.asset?.asset_type])
 
   const tradesSorted = useMemo(() => {
     const list = data?.trades || []
@@ -138,6 +183,51 @@ export default function AssetDetail() {
             <span className="rounded-full bg-[#F5F5F5] px-2.5 py-0.5 text-[11px] font-medium text-[#555] dark:bg-zinc-800 dark:text-zinc-300">
               {typeLabel}
             </span>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-end gap-x-6 gap-y-3">
+            {(() => {
+              const isFund = asset.asset_type === 'fund'
+              const price = isFund ? Number(rt?.nav) : Number(rt?.price)
+              const changePct = Number(rt?.change_pct)
+              const hasPrice = Number.isFinite(price)
+              const hasChg = Number.isFinite(changePct)
+              const tone =
+                hasChg && changePct >= 0 ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'
+              return (
+                <div className="flex items-baseline gap-3">
+                  <div className="text-[28px] font-extrabold tabular-nums text-[#1A1A1A] dark:text-white">
+                    {hasPrice ? price.toFixed(2) : rtLoading ? '—' : '—'}
+                  </div>
+                  <div className={`text-[13px] font-semibold tabular-nums ${hasChg ? tone : 'text-[#999] dark:text-zinc-500'}`}>
+                    {hasChg ? `${changePct >= 0 ? '+' : ''}${changePct}%` : '行情暂不可用'}
+                  </div>
+                </div>
+              )
+            })()}
+
+            <div className="flex flex-wrap gap-2">
+              {Number.isFinite(Number(info?.pe)) && Number(info.pe) > 0 && (
+                <span className="rounded-full bg-[#F5F5F5] px-2.5 py-1 text-[11px] font-medium text-[#555] dark:bg-zinc-800 dark:text-zinc-300">
+                  PE {Number(info.pe).toFixed(1)}
+                </span>
+              )}
+              {Number.isFinite(Number(info?.pb)) && Number(info.pb) > 0 && (
+                <span className="rounded-full bg-[#F5F5F5] px-2.5 py-1 text-[11px] font-medium text-[#555] dark:bg-zinc-800 dark:text-zinc-300">
+                  PB {Number(info.pb).toFixed(1)}
+                </span>
+              )}
+              {info?.sector && String(info.sector).trim() && (
+                <span className="rounded-full bg-[#F5F5F5] px-2.5 py-1 text-[11px] font-medium text-[#555] dark:bg-zinc-800 dark:text-zinc-300">
+                  行业 {String(info.sector).trim()}
+                </span>
+              )}
+              {Number.isFinite(Number(info?.market_cap)) && Number(info.market_cap) > 0 && (
+                <span className="rounded-full bg-[#F5F5F5] px-2.5 py-1 text-[11px] font-medium text-[#555] dark:bg-zinc-800 dark:text-zinc-300">
+                  总市值 {Number(info.market_cap).toLocaleString('zh-CN')}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </header>
