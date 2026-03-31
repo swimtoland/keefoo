@@ -11,6 +11,66 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models import models as m
 
 
+# --- Market data (AKShare) ---
+
+
+class MarketIndex(BaseModel):
+    name: str
+    name_en: str = ""
+    code: str
+    price: float
+    change_pct: float
+
+
+class StockRealtime(BaseModel):
+    code: str
+    name: str = ""
+    price: float
+    change_pct: float
+    volume: float = 0
+    turnover_rate: float = 0
+    pe: float = 0
+    market_cap: float = 0
+
+
+class FundRealtime(BaseModel):
+    code: str
+    name: str = ""
+    nav: float
+    change_pct: float
+
+
+class KlineData(BaseModel):
+    date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+class NewsItem(BaseModel):
+    title: str
+    summary: str = ""
+    source: str = ""
+    publish_time: str = ""
+    url: str = ""
+
+
+class StockInfo(BaseModel):
+    code: str
+    name: str = ""
+    sector: str = ""
+    market: str = ""
+    market_cap: float = 0
+    pe: float = 0
+    pb: float = 0
+    total_shares: float = 0
+    float_shares: float = 0
+    revenue: float = 0
+    net_profit: float = 0
+
+
 # --- User ---
 
 

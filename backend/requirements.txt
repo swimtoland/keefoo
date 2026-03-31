@@ -9,3 +9,5 @@ pydantic
 httpx
 pyjwt
 bcrypt>=4.0.1
+akshare
+openai

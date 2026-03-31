@@ -23,6 +23,8 @@ class Settings(BaseModel):
     DATABASE_URL: str = Field(default="sqlite:///./keefoo_dev.db")
     DEBUG: bool = Field(default=True)
     SECRET_KEY: str = Field(default="dev-secret-change-in-production-use-32chars")
+    DEEPSEEK_API_KEY: str = Field(default="")
+    AKSHARE_CACHE_TTL: int = Field(default=60, ge=1)
 
 
 @lru_cache
@@ -34,4 +36,6 @@ def get_settings() -> Settings:
         DATABASE_URL=os.getenv("DATABASE_URL", "sqlite:///./keefoo_dev.db"),
         DEBUG=str(debug_raw).lower() in ("true", "1", "yes"),
         SECRET_KEY=os.getenv("SECRET_KEY", "dev-secret-change-in-production-use-32chars"),
+        DEEPSEEK_API_KEY=os.getenv("DEEPSEEK_API_KEY", ""),
+        AKSHARE_CACHE_TTL=int(os.getenv("AKSHARE_CACHE_TTL", "60") or "60"),
     )

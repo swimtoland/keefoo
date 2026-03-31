@@ -20,10 +20,15 @@ from app.core.auth import (
     hash_password,
     verify_password_or_legacy,
 )
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.models import models as m
 from app.models.schemas import (
     AgentReplyBody,
+    FundRealtime,
+    KlineData,
+    MarketIndex,
+    NewsItem,
     AssetDetailResponse,
     AssetOut,
     AuthResponse,
@@ -57,6 +62,8 @@ from app.models.schemas import (
     ShadowPositionCreate,
     ShadowPositionOut,
     StrategyProfileResponse,
+    StockInfo,
+    StockRealtime,
     TradeCreate,
     TradeOut,
     UserCreate,
@@ -64,7 +71,21 @@ from app.models.schemas import (
     UserResponse,
 )
 from app.services.agent_service import generate_question, load_events_near_trade, parse_user_reply
+from app.services.ai_service import (
+    generate_report_commentary,
+    generate_scenario,
+    generate_smart_question,
+    parse_reply_with_ai,
+)
 from app.services.graph_service import get_knowledge_graph
+from app.services.market_data_service import (
+    get_financial_news,
+    get_fund_realtime,
+    get_market_indices,
+    get_stock_info,
+    get_stock_kline,
+    get_stock_realtime,
+)
 from app.services.profile_service import generate_strategy_profile, get_bias_analysis_with_descriptions
 from app.services.report_service import generate_report
 from app.services.scenario_service import generate_scenario_push
@@ -76,6 +97,55 @@ FREE_TIER_SHADOW_CAP = 5
 
 def _hash_password(plain: str) -> str:
     return hashlib.sha256(plain.encode("utf-8")).hexdigest()
+
+
+# --- Market data (AKShare) ---
+
+
+@router.get("/market/indices", response_model=list[MarketIndex])
+def market_indices() -> list[MarketIndex]:
+    rows = get_market_indices()
+    return [MarketIndex.model_validate(r) for r in (rows or [])]
+
+
+@router.get("/market/stock/{code}", response_model=StockRealtime)
+def market_stock_realtime(code: str) -> StockRealtime:
+    data = get_stock_realtime(code)
+    if not data:
+        raise HTTPException(status_code=404, detail="Stock not found")
+    return StockRealtime.model_validate(data)
+
+
+@router.get("/market/fund/{code}", response_model=FundRealtime)
+def market_fund_realtime(code: str) -> FundRealtime:
+    data = get_fund_realtime(code)
+    if not data:
+        raise HTTPException(status_code=404, detail="Fund not found")
+    return FundRealtime.model_validate(data)
+
+
+@router.get("/market/kline/{code}", response_model=list[KlineData])
+def market_kline(
+    code: str,
+    period: str = Query(default="daily"),
+    count: int = Query(default=120, ge=1, le=2000),
+) -> list[KlineData]:
+    data = get_stock_kline(code, period=period, count=count)
+    return [KlineData.model_validate(r) for r in (data or [])]
+
+
+@router.get("/market/news", response_model=list[NewsItem])
+def market_news(count: int = Query(default=20, ge=1, le=100)) -> list[NewsItem]:
+    data = get_financial_news(count=count)
+    return [NewsItem.model_validate(r) for r in (data or [])]
+
+
+@router.get("/market/stock-info/{code}", response_model=StockInfo)
+def market_stock_info(code: str) -> StockInfo:
+    data = get_stock_info(code)
+    if not data:
+        raise HTTPException(status_code=404, detail="Stock not found")
+    return StockInfo.model_validate(data)
 
 
 def get_or_create_asset(
@@ -294,7 +364,27 @@ def create_trade(
     assert trade is not None
     assert trade.asset is not None
     near_events = load_events_near_trade(db, trade.asset_id, trade.traded_at)
-    trade.agent_question_text = generate_question(trade, trade.asset, near_events)
+    settings = get_settings()
+    if getattr(settings, "DEEPSEEK_API_KEY", ""):
+        try:
+            trade_info = {
+                "traded_at": trade.traded_at.isoformat(),
+                "price": float(trade.price),
+                "direction": trade.direction.value if trade.direction else "",
+                "asset_name": trade.asset.name,
+                "asset_code": trade.asset.code,
+            }
+            market_context = {
+                "indices": get_market_indices(),
+                "realtime": get_stock_realtime(trade.asset.code),
+                "news": get_financial_news(count=5),
+                "near_events": [{"title": e.title, "type": e.event_type.value} for e in (near_events or [])[:3]],
+            }
+            trade.agent_question_text = generate_smart_question(trade_info, market_context)
+        except Exception:
+            trade.agent_question_text = generate_question(trade, trade.asset, near_events)
+    else:
+        trade.agent_question_text = generate_question(trade, trade.asset, near_events)
     trade.agent_question_sent = True
     trade.agent_question_sent_at = datetime.now(timezone.utc)
     db.commit()
@@ -624,7 +714,23 @@ def agent_reply(body: AgentReplyBody, db: Session = Depends(get_db)) -> TradeOut
     if not trade:
         raise HTTPException(status_code=404, detail="Trade not found")
 
-    parsed = parse_user_reply(body.reply.strip())
+    settings = get_settings()
+    if getattr(settings, "DEEPSEEK_API_KEY", ""):
+        try:
+            trade_ctx = {
+                "trade_id": str(trade.id),
+                "asset_code": trade.asset.code if trade.asset else "",
+                "asset_name": trade.asset.name if trade.asset else "",
+                "direction": trade.direction.value if trade.direction else "",
+                "price": float(trade.price),
+                "quantity": float(trade.quantity),
+                "traded_at": trade.traded_at.isoformat() if trade.traded_at else "",
+            }
+            parsed = parse_reply_with_ai(body.reply.strip(), trade_ctx)
+        except Exception:
+            parsed = parse_user_reply(body.reply.strip())
+    else:
+        parsed = parse_user_reply(body.reply.strip())
     trade.decision_note = parsed["structured_note"]
     trade.emotion_score = parsed["emotion_score"]
     trade.confidence_score = parsed["confidence_score"]
@@ -662,6 +768,13 @@ def get_period_report(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     raw = generate_report(user_id, period, db)
+    settings = get_settings()
+    if getattr(settings, "DEEPSEEK_API_KEY", "") and raw.get("has_data"):
+        try:
+            txt = generate_report_commentary(raw)
+            raw["ai_commentary"] = [txt]
+        except Exception:
+            pass
     return ReportResponse.model_validate(raw)
 
 
@@ -717,6 +830,7 @@ def list_scenario_pushes(
         .all()
     )
     out: list[ScenarioPushResponse] = []
+    settings = get_settings()
     for sp in shadows:
         if not sp.scenario_push_enabled:
             continue
@@ -730,6 +844,30 @@ def list_scenario_pushes(
             .first()
         )
         raw = generate_scenario_push(sp, latest_event)
+        if getattr(settings, "DEEPSEEK_API_KEY", ""):
+            try:
+                asset_info = {
+                    "code": sp.asset.code,
+                    "name": sp.asset.name,
+                    "asset_type": sp.asset.asset_type.value if sp.asset.asset_type else "",
+                    "sector": sp.asset.sector,
+                    "market": sp.asset.market.value if sp.asset.market else "",
+                }
+                event_info = None
+                if latest_event is not None:
+                    event_info = {
+                        "title": latest_event.title,
+                        "summary": latest_event.summary,
+                        "event_type": latest_event.event_type.value if latest_event.event_type else "",
+                        "impact_level": latest_event.impact_level.value if latest_event.impact_level else "",
+                        "occurred_at": latest_event.occurred_at.isoformat() if latest_event.occurred_at else "",
+                    }
+                if event_info is not None:
+                    ai = generate_scenario(asset_info, event_info)
+                    raw["scenario_text"] = ai["scenario_text"]
+                    raw["direction"] = ai["direction"]
+            except Exception:
+                pass
         created = datetime.fromisoformat(raw["created_at"].replace("Z", "+00:00"))
         out.append(
             ScenarioPushResponse(

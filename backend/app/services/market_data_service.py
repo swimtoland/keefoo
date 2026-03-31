@@ -1,0 +1,359 @@
+"""AKShare market data service (best-effort, cached, no API key required)."""
+
+from __future__ import annotations
+
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from typing import Any, Callable, Optional
+
+from app.core.config import get_settings
+
+_cache: dict[str, dict[str, Any]] = {}
+_executor = ThreadPoolExecutor(max_workers=4)
+
+
+def _run_with_timeout(fetch_fn: Callable[[], Any], timeout_seconds: float) -> Any:
+    fut = _executor.submit(fetch_fn)
+    return fut.result(timeout=timeout_seconds)
+
+
+def cached(key: str, ttl_seconds: int, fetch_fn: Callable[[], Any], *, max_wait_seconds: float = 8.0):
+    """简易缓存：key 存在且未过期则返回缓存，否则调用 fetch_fn 获取新数据。"""
+    now = time.time()
+    if key in _cache and now - float(_cache[key]["time"]) < ttl_seconds:
+        return _cache[key]["data"]
+    try:
+        data = _run_with_timeout(fetch_fn, max_wait_seconds)
+        _cache[key] = {"data": data, "time": now}
+        return data
+    except FutureTimeout:
+        print(f"AKShare timeout for {key} (> {max_wait_seconds}s)")
+        if key in _cache:
+            return _cache[key]["data"]
+        return None
+    except Exception as e:
+        print(f"AKShare error for {key}: {e}")
+        if key in _cache:
+            return _cache[key]["data"]
+        return None
+
+
+def _to_float(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        if isinstance(v, str):
+            s = v.strip().replace("%", "").replace(",", "")
+            if s in ("", "-", "—", "None", "nan", "NaN"):
+                return None
+            return float(s)
+        return float(v)
+    except Exception:
+        return None
+
+
+def _pick(row: dict[str, Any], *keys: str) -> Any:
+    for k in keys:
+        if k in row and row[k] not in (None, ""):
+            return row[k]
+    return None
+
+
+_INDEX_EN = {
+    "000001": "SSE Composite",
+    "399001": "SZSE Component",
+    "000300": "CSI 300",
+    "399006": "ChiNext",
+    "000688": "STAR 50",
+    "000016": "SSE 50",
+    "000905": "CSI 500",
+    "000852": "CSI 1000",
+}
+
+_INDEX_NAME_ZH = {
+    "000001": "上证指数",
+    "399001": "深证成指",
+    "000300": "沪深300",
+    "399006": "创业板指",
+    "000688": "科创50",
+    "000016": "上证50",
+    "000905": "中证500",
+    "000852": "中证1000",
+}
+
+
+def get_market_indices() -> list[dict]:
+    """
+    获取主要大盘指数的实时数据（best-effort）。
+
+    失败时返回空列表（不抛异常）。
+    缓存 60 秒（默认，可通过 AKSHARE_CACHE_TTL 调整）。
+    """
+
+    settings = get_settings()
+    ttl = int(getattr(settings, "AKSHARE_CACHE_TTL", 60) or 60)
+
+    def _fetch():
+        import akshare as ak  # type: ignore
+
+        df = ak.stock_zh_index_spot_em()
+        rows = df.to_dict(orient="records")
+        want = set(_INDEX_NAME_ZH.keys())
+        out: list[dict] = []
+        for r in rows:
+            code = str(_pick(r, "代码", "code", "symbol") or "").strip()
+            if code not in want:
+                continue
+            name = str(_pick(r, "名称", "name") or _INDEX_NAME_ZH.get(code, code))
+            price = _to_float(_pick(r, "最新价", "最新", "price", "现价"))
+            chg = _to_float(_pick(r, "涨跌幅", "涨跌幅(%)", "change_pct", "涨跌幅%"))
+            if price is None and chg is None:
+                continue
+            out.append(
+                {
+                    "name": _INDEX_NAME_ZH.get(code, name),
+                    "name_en": _INDEX_EN.get(code, ""),
+                    "code": code,
+                    "price": float(price or 0.0),
+                    "change_pct": float(chg or 0.0),
+                }
+            )
+        return out
+
+    data = cached("indices", ttl, _fetch, max_wait_seconds=8.0)
+    return data or []
+
+
+def get_stock_realtime(code: str) -> dict:
+    """
+    获取单只股票实时行情（best-effort）。
+
+    缓存 30 秒；失败时返回空 dict。
+    """
+
+    symbol = str(code).strip()
+    if not symbol:
+        return {}
+
+    def _fetch():
+        import akshare as ak  # type: ignore
+
+        df = ak.stock_zh_a_spot_em()
+        rows = df.to_dict(orient="records")
+        hit = None
+        for r in rows:
+            c = str(_pick(r, "代码", "code", "symbol") or "").strip()
+            if c == symbol:
+                hit = r
+                break
+        if not hit:
+            return {}
+        name = str(_pick(hit, "名称", "name") or "")
+        price = _to_float(_pick(hit, "最新价", "最新", "price", "现价")) or 0.0
+        change_pct = _to_float(_pick(hit, "涨跌幅", "涨跌幅(%)", "change_pct")) or 0.0
+        volume = _to_float(_pick(hit, "成交量", "volume")) or 0.0
+        turnover_rate = _to_float(_pick(hit, "换手率", "turnover_rate")) or 0.0
+        pe = _to_float(_pick(hit, "市盈率-动态", "市盈率", "pe")) or 0.0
+        market_cap = _to_float(_pick(hit, "总市值", "总市值(元)", "market_cap")) or 0.0
+        # akshare 市值字段可能是元；这里按“亿”为单位更常见，但不强行换算，交给前端展示。
+        return {
+            "code": symbol,
+            "name": name,
+            "price": float(price),
+            "change_pct": float(change_pct),
+            "volume": float(volume),
+            "turnover_rate": float(turnover_rate),
+            "pe": float(pe),
+            "market_cap": float(market_cap),
+        }
+
+    data = cached(f"stock:{symbol}", 30, _fetch, max_wait_seconds=6.0)
+    return data or {}
+
+
+def get_fund_realtime(code: str) -> dict:
+    """
+    获取基金实时/最新净值（best-effort）。
+
+    缓存 60 秒；失败时返回空 dict。
+    """
+
+    symbol = str(code).strip()
+    if not symbol:
+        return {}
+
+    def _fetch():
+        import akshare as ak  # type: ignore
+
+        df = ak.fund_open_fund_info_em(symbol=symbol, indicator="单位净值走势")
+        rows = df.to_dict(orient="records")
+        if not rows:
+            return {}
+        last = rows[-1]
+        nav = _to_float(_pick(last, "单位净值", "nav", "净值")) or 0.0
+        chg_raw = _pick(last, "日增长率", "change_pct", "涨跌幅")
+        change_pct = _to_float(chg_raw) or 0.0
+        return {
+            "code": symbol,
+            "name": "",
+            "nav": float(nav),
+            "change_pct": float(change_pct),
+        }
+
+    data = cached(f"fund:{symbol}", 60, _fetch, max_wait_seconds=8.0)
+    return data or {}
+
+
+def get_stock_kline(code: str, period: str = "daily", count: int = 120) -> list[dict]:
+    """
+    获取股票 K 线数据（best-effort）。
+
+    缓存 5 分钟；失败时返回空列表。
+    """
+
+    symbol = str(code).strip()
+    if not symbol:
+        return []
+    p = (period or "daily").strip().lower()
+    if p not in ("daily", "weekly", "monthly"):
+        p = "daily"
+    n = int(count or 120)
+    n = max(1, min(n, 2000))
+
+    def _fetch():
+        import akshare as ak  # type: ignore
+
+        df = ak.stock_zh_a_hist(symbol=symbol, period=p, adjust="qfq")
+        rows = df.to_dict(orient="records")
+        if not rows:
+            return []
+        tail = rows[-n:]
+        out: list[dict] = []
+        for r in tail:
+            d = _pick(r, "日期", "date")
+            open_ = _to_float(_pick(r, "开盘", "open")) or 0.0
+            high = _to_float(_pick(r, "最高", "high")) or 0.0
+            low = _to_float(_pick(r, "最低", "low")) or 0.0
+            close = _to_float(_pick(r, "收盘", "close")) or 0.0
+            vol = _to_float(_pick(r, "成交量", "volume")) or 0.0
+            out.append(
+                {
+                    "date": str(d),
+                    "open": float(open_),
+                    "high": float(high),
+                    "low": float(low),
+                    "close": float(close),
+                    "volume": float(vol),
+                }
+            )
+        return out
+
+    data = cached(f"kline:{symbol}:{p}:{n}", 300, _fetch, max_wait_seconds=10.0)
+    return data or []
+
+
+def get_financial_news(count: int = 20) -> list[dict]:
+    """
+    获取最新财经新闻（best-effort，多接口兜底）。
+
+    缓存 5 分钟；失败时返回空列表。
+    """
+
+    n = int(count or 20)
+    n = max(1, min(n, 100))
+
+    def _fetch():
+        import akshare as ak  # type: ignore
+
+        errors: list[str] = []
+        candidates = []
+
+        try:
+            df = ak.stock_news_em(symbol="")
+            candidates = df.to_dict(orient="records")
+        except Exception as e:
+            errors.append(f"stock_news_em: {e}")
+
+        if not candidates:
+            try:
+                df = ak.news_cctv()
+                candidates = df.to_dict(orient="records")
+            except Exception as e:
+                errors.append(f"news_cctv: {e}")
+
+        if not candidates:
+            raise RuntimeError("all news sources failed: " + " | ".join(errors))
+
+        out: list[dict] = []
+        for r in candidates[:n]:
+            title = str(_pick(r, "标题", "title") or "").strip()
+            if not title:
+                continue
+            out.append(
+                {
+                    "title": title,
+                    "summary": str(_pick(r, "内容", "摘要", "summary") or "")[:300],
+                    "source": str(_pick(r, "来源", "source") or ""),
+                    "publish_time": str(_pick(r, "发布时间", "时间", "publish_time") or ""),
+                    "url": str(_pick(r, "链接", "url") or ""),
+                }
+            )
+        return out
+
+    data = cached(f"news:{n}", 300, _fetch, max_wait_seconds=8.0)
+    return data or []
+
+
+def get_stock_info(code: str) -> dict:
+    """
+    获取上市公司基本面信息（best-effort）。
+
+    缓存 1 小时；失败时返回空 dict。
+    """
+
+    symbol = str(code).strip()
+    if not symbol:
+        return {}
+
+    def _fetch():
+        import akshare as ak  # type: ignore
+
+        df = ak.stock_individual_info_em(symbol=symbol)
+        rows = df.to_dict(orient="records")
+        # 常见结构：{"item": "...", "value": "..."} 或中文列名
+        kv: dict[str, Any] = {}
+        for r in rows:
+            k = str(_pick(r, "item", "项目", "指标") or "").strip()
+            v = _pick(r, "value", "值", "数据")
+            if k:
+                kv[k] = v
+
+        name = str(kv.get("股票简称") or kv.get("名称") or "")
+        sector = str(kv.get("行业") or kv.get("所属行业") or "")
+        market = str(kv.get("市场") or kv.get("上市市场") or "")
+
+        def pick_num(*ks: str) -> Optional[float]:
+            for k in ks:
+                if k in kv:
+                    v = _to_float(kv.get(k))
+                    if v is not None:
+                        return v
+            return None
+
+        return {
+            "code": symbol,
+            "name": name,
+            "sector": sector,
+            "market": market.lower() if market else "",
+            "market_cap": pick_num("总市值", "市值") or 0.0,
+            "pe": pick_num("市盈率", "市盈率(动态)") or 0.0,
+            "pb": pick_num("市净率") or 0.0,
+            "total_shares": pick_num("总股本") or 0.0,
+            "float_shares": pick_num("流通股") or 0.0,
+            "revenue": pick_num("营业收入") or 0.0,
+            "net_profit": pick_num("净利润") or 0.0,
+        }
+
+    data = cached(f"stock-info:{symbol}", 3600, _fetch, max_wait_seconds=10.0)
+    return data or {}
+
