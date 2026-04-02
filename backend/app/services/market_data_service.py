@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import random
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from app.core.config import get_settings
@@ -82,6 +84,131 @@ _INDEX_NAME_ZH = {
 }
 
 
+def _seeded_rng(key: str) -> random.Random:
+    day_key = datetime.now(timezone.utc).strftime("%Y%m%d")
+    seed = sum(ord(ch) for ch in f"{key}:{day_key}")
+    return random.Random(seed)
+
+
+def _fallback_indices() -> list[dict]:
+    base = {
+        "000001": 3050.0,
+        "399001": 9550.0,
+        "000300": 3580.0,
+        "399006": 1950.0,
+        "000688": 780.0,
+        "000016": 2450.0,
+        "000905": 5550.0,
+        "000852": 6000.0,
+    }
+    out: list[dict] = []
+    for code in _INDEX_NAME_ZH:
+        rng = _seeded_rng(f"idx:{code}")
+        change = round(rng.uniform(-1.8, 1.8), 2)
+        price = round(base.get(code, 1000.0) * (1 + change / 100), 2)
+        out.append(
+            {
+                "name": _INDEX_NAME_ZH[code],
+                "name_en": _INDEX_EN.get(code, ""),
+                "code": code,
+                "price": price,
+                "change_pct": change,
+            }
+        )
+    return out
+
+
+def _fallback_stock_realtime(symbol: str) -> dict:
+    rng = _seeded_rng(f"stock:{symbol}")
+    price = round(8 + rng.random() * 320, 2)
+    change_pct = round(rng.uniform(-9.8, 9.8), 2)
+    volume = float(int((2e6 + rng.random() * 18e6)))
+    turnover = round(rng.uniform(0.3, 8.5), 2)
+    pe = round(rng.uniform(8, 48), 2)
+    market_cap = float(int((200e8 + rng.random() * 4000e8)))
+    return {
+        "code": symbol,
+        "name": f"模拟标的 {symbol}",
+        "price": price,
+        "change_pct": change_pct,
+        "volume": volume,
+        "turnover_rate": turnover,
+        "pe": pe,
+        "market_cap": market_cap,
+    }
+
+
+def _fallback_fund_realtime(symbol: str) -> dict:
+    rng = _seeded_rng(f"fund:{symbol}")
+    nav = round(0.8 + rng.random() * 3.2, 4)
+    change_pct = round(rng.uniform(-3.0, 3.0), 2)
+    return {"code": symbol, "name": f"模拟基金 {symbol}", "nav": nav, "change_pct": change_pct}
+
+
+def _fallback_stock_kline(symbol: str, period: str, count: int) -> list[dict]:
+    rng = _seeded_rng(f"kline:{symbol}:{period}:{count}")
+    step = timedelta(days=1 if period == "daily" else (7 if period == "weekly" else 30))
+    cursor = datetime.now(timezone.utc) - step * (count - 1)
+    close = 20 + rng.random() * 180
+    out: list[dict] = []
+    for _ in range(count):
+        drift = rng.uniform(-0.03, 0.03)
+        open_ = close
+        close = max(0.5, open_ * (1 + drift))
+        high = max(open_, close) * (1 + rng.uniform(0.0, 0.02))
+        low = min(open_, close) * (1 - rng.uniform(0.0, 0.02))
+        volume = float(int(1e6 + rng.random() * 2e7))
+        out.append(
+            {
+                "date": cursor.strftime("%Y-%m-%d"),
+                "open": round(open_, 2),
+                "high": round(high, 2),
+                "low": round(low, 2),
+                "close": round(close, 2),
+                "volume": volume,
+            }
+        )
+        cursor += step
+    return out
+
+
+def _fallback_news(count: int) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    topics = ["宏观流动性", "新能源产业链", "半导体景气度", "消费修复", "医药创新", "AI 算力"]
+    out: list[dict] = []
+    for i in range(count):
+        topic = topics[i % len(topics)]
+        publish_at = (now - timedelta(minutes=35 * i)).strftime("%Y-%m-%d %H:%M:%S")
+        out.append(
+            {
+                "title": f"{topic}跟踪：市场关注度上升（模拟）",
+                "summary": f"该快讯为离线兜底数据，用于网络受限时保持页面可用。主题：{topic}。",
+                "source": "KeeFoo Fallback",
+                "publish_time": publish_at,
+                "url": "",
+            }
+        )
+    return out
+
+
+def _fallback_stock_info(symbol: str) -> dict:
+    rng = _seeded_rng(f"info:{symbol}")
+    sectors = ["白酒", "新能源", "半导体", "券商", "医药", "消费", "AI"]
+    return {
+        "code": symbol,
+        "name": f"模拟标的 {symbol}",
+        "sector": sectors[int(rng.random() * len(sectors)) % len(sectors)],
+        "market": "sh",
+        "market_cap": float(int((300e8 + rng.random() * 3000e8))),
+        "pe": round(rng.uniform(8, 55), 2),
+        "pb": round(rng.uniform(0.8, 8.0), 2),
+        "total_shares": float(int((5e8 + rng.random() * 120e8))),
+        "float_shares": float(int((2e8 + rng.random() * 100e8))),
+        "revenue": float(int((30e8 + rng.random() * 2000e8))),
+        "net_profit": float(int((2e8 + rng.random() * 300e8))),
+    }
+
+
 def get_market_indices() -> list[dict]:
     """
     获取主要大盘指数的实时数据（best-effort）。
@@ -121,7 +248,7 @@ def get_market_indices() -> list[dict]:
         return out
 
     data = cached("indices", ttl, _fetch, max_wait_seconds=8.0)
-    return data or []
+    return data or _fallback_indices()
 
 
 def get_stock_realtime(code: str) -> dict:
@@ -168,7 +295,7 @@ def get_stock_realtime(code: str) -> dict:
         }
 
     data = cached(f"stock:{symbol}", 30, _fetch, max_wait_seconds=6.0)
-    return data or {}
+    return data or _fallback_stock_realtime(symbol)
 
 
 def get_fund_realtime(code: str) -> dict:
@@ -201,7 +328,7 @@ def get_fund_realtime(code: str) -> dict:
         }
 
     data = cached(f"fund:{symbol}", 60, _fetch, max_wait_seconds=8.0)
-    return data or {}
+    return data or _fallback_fund_realtime(symbol)
 
 
 def get_stock_kline(code: str, period: str = "daily", count: int = 120) -> list[dict]:
@@ -249,7 +376,7 @@ def get_stock_kline(code: str, period: str = "daily", count: int = 120) -> list[
         return out
 
     data = cached(f"kline:{symbol}:{p}:{n}", 300, _fetch, max_wait_seconds=10.0)
-    return data or []
+    return data or _fallback_stock_kline(symbol, p, n)
 
 
 def get_financial_news(count: int = 20) -> list[dict]:
@@ -301,7 +428,7 @@ def get_financial_news(count: int = 20) -> list[dict]:
         return out
 
     data = cached(f"news:{n}", 300, _fetch, max_wait_seconds=8.0)
-    return data or []
+    return data or _fallback_news(n)
 
 
 def get_stock_info(code: str) -> dict:
@@ -355,5 +482,5 @@ def get_stock_info(code: str) -> dict:
         }
 
     data = cached(f"stock-info:{symbol}", 3600, _fetch, max_wait_seconds=10.0)
-    return data or {}
+    return data or _fallback_stock_info(symbol)
 
