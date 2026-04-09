@@ -50,3 +50,8 @@ def root() -> RedirectResponse:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/v1/health")
+def health_v1() -> dict[str, str]:
+    return {"status": "ok"}

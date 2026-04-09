@@ -264,36 +264,50 @@ def get_stock_realtime(code: str) -> dict:
         return {}
 
     def _fetch():
-        import akshare as ak  # type: ignore
+        # 1. 优先尝试 Tushare
+        ts_quote = tushare_service.get_stock_quote(symbol)
+        if ts_quote:
+            # 尝试补全名称 (Tushare 报价不带名称)
+            basic = tushare_service.get_stock_basic_info(symbol)
+            if basic:
+                ts_quote["name"] = basic.get("name", "")
+            return ts_quote
 
-        df = ak.stock_zh_a_spot_em()
-        rows = df.to_dict(orient="records")
-        hit = None
-        for r in rows:
-            c = str(_pick(r, "代码", "code", "symbol") or "").strip()
-            if c == symbol:
-                hit = r
-                break
-        if not hit:
+        # 2. Fallback 到 AKShare
+        try:
+            import akshare as ak  # type: ignore
+
+            df = ak.stock_zh_a_spot_em()
+            rows = df.to_dict(orient="records")
+            hit = None
+            for r in rows:
+                c = str(_pick(r, "代码", "code", "symbol") or "").strip()
+                if c == symbol:
+                    hit = r
+                    break
+            if not hit:
+                return {}
+            name = str(_pick(hit, "名称", "name") or "")
+            price = _to_float(_pick(hit, "最新价", "最新", "price", "现价")) or 0.0
+            change_pct = _to_float(_pick(hit, "涨跌幅", "涨跌幅(%)", "change_pct")) or 0.0
+            volume = _to_float(_pick(hit, "成交量", "volume")) or 0.0
+            turnover_rate = _to_float(_pick(hit, "换手率", "turnover_rate")) or 0.0
+            pe = _to_float(_pick(hit, "市盈率-动态", "市盈率", "pe")) or 0.0
+            market_cap = _to_float(_pick(hit, "总市值", "总市值(元)", "market_cap")) or 0.0
+            # akshare 市值字段可能是元；这里按“亿”为单位更常见，但不强行换算，交给前端展示。
+            return {
+                "code": symbol,
+                "name": name,
+                "price": float(price),
+                "change_pct": float(change_pct),
+                "volume": float(volume),
+                "turnover_rate": float(turnover_rate),
+                "pe": float(pe),
+                "market_cap": float(market_cap),
+            }
+        except Exception as e:
+            print(f"AKShare error for {symbol} realtime: {e}")
             return {}
-        name = str(_pick(hit, "名称", "name") or "")
-        price = _to_float(_pick(hit, "最新价", "最新", "price", "现价")) or 0.0
-        change_pct = _to_float(_pick(hit, "涨跌幅", "涨跌幅(%)", "change_pct")) or 0.0
-        volume = _to_float(_pick(hit, "成交量", "volume")) or 0.0
-        turnover_rate = _to_float(_pick(hit, "换手率", "turnover_rate")) or 0.0
-        pe = _to_float(_pick(hit, "市盈率-动态", "市盈率", "pe")) or 0.0
-        market_cap = _to_float(_pick(hit, "总市值", "总市值(元)", "market_cap")) or 0.0
-        # akshare 市值字段可能是元；这里按“亿”为单位更常见，但不强行换算，交给前端展示。
-        return {
-            "code": symbol,
-            "name": name,
-            "price": float(price),
-            "change_pct": float(change_pct),
-            "volume": float(volume),
-            "turnover_rate": float(turnover_rate),
-            "pe": float(pe),
-            "market_cap": float(market_cap),
-        }
 
     data = cached(f"stock:{symbol}", 30, _fetch, max_wait_seconds=6.0)
     return data or _fallback_stock_realtime(symbol)

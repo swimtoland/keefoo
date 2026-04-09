@@ -49,6 +49,47 @@ def get_daily_stock_kline(code: str, start_date: str, end_date: str) -> list[dic
         print(f"Tushare error for {code}: {e}")
         return []
 
+def get_stock_quote(code: str) -> dict:
+    """获取股票最新日线报价（模拟实时）。"""
+    from datetime import datetime
+    pro = _get_ts_pro()
+    if not pro:
+        return {}
+        
+    try:
+        ts_code = code
+        if not ("." in ts_code):
+            if ts_code.startswith("60") or ts_code.startswith("68"):
+                ts_code = f"{ts_code}.SH"
+            else:
+                ts_code = f"{ts_code}.SZ"
+                
+        # 获取最近两天的行情，以防今天还没收盘或还没数据
+        end_date = datetime.now().strftime("%Y%m%d")
+        df = pro.daily(ts_code=ts_code, end_date=end_date, limit=1)
+        if df.empty:
+            return {}
+            
+        r = df.iloc[0]
+        # 计算涨跌幅
+        close = float(r["close"])
+        pre_close = float(r["pre_close"])
+        change_pct = round((close - pre_close) / pre_close * 100, 2) if pre_close else 0.0
+        
+        return {
+            "code": code,
+            "name": "", # Basic info needed for name
+            "price": close,
+            "change_pct": change_pct,
+            "volume": float(r["vol"]) * 100,
+            "turnover_rate": float(r.get("turnover_rate", 0.0)),
+            "pe": float(r.get("pe", 0.0)),
+            "market_cap": float(r.get("amount", 0.0)) # 凑合用金额当市值，或者后续调用 basic
+        }
+    except Exception as e:
+        print(f"Tushare quote error for {code}: {e}")
+        return {}
+
 def get_stock_basic_info(code: str) -> dict:
     """获取股票基础信息。"""
     pro = _get_ts_pro()
