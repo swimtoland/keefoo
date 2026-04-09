@@ -243,6 +243,18 @@ export default function Chart() {
       setTimeout(() => {
         if (chart) chart.timeScale().fitContent()
       }, 50)
+
+      // 实时响应容器大小变化 (适应侧边栏展开/收起)
+      const resizeObserver = new ResizeObserver(() => {
+        if (chart && chartContainerRef.current) {
+          chart.applyOptions({ 
+            width: chartContainerRef.current.clientWidth,
+            height: chartContainerRef.current.clientHeight
+          })
+          chart.timeScale().fitContent()
+        }
+      })
+      resizeObserver.observe(chartContainerRef.current)
     }
 
     if (typeof window.LightweightCharts === 'undefined') {
