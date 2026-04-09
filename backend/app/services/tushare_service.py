@@ -27,6 +27,8 @@ def get_daily_stock_kline(code: str, start_date: str, end_date: str) -> list[dic
             else:
                 ts_code = f"{ts_code}.SZ"
                 
+        # Tushare pro.daily 支持 adj='qfq' 需要更高级权限，基础 120 积分可能不支持。
+        # 这里我们先用最基础的，如果返回为空，尝试 pro.stock_basic 确认代码是否存在。
         df = pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
         if df.empty:
             return []
