@@ -29,6 +29,7 @@ import Graph from './pages/Graph.jsx'
 import Chart from './pages/Chart.jsx'
 import Notebook from './pages/Notebook.jsx'
 import Calendar from './pages/Calendar.jsx'
+import StrategyManual from './pages/StrategyManual.jsx'
 import Login from './pages/Login.jsx'
 
 const navInput = [
@@ -209,6 +210,7 @@ function AppRoutes() {
         <Route path="report" element={<Report />} />
         <Route path="profile" element={<Profile />} />
         <Route path="graph" element={<Graph />} />
+        <Route path="strategy-manual" element={<StrategyManual />} />
         <Route path="calendar" element={<Calendar />} />
         <Route path="chart" element={<Chart />} />
         <Route path="notebook" element={<Notebook />} />

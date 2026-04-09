@@ -23,13 +23,13 @@ function whenText(iso, dateLocale) {
 
 function emotionEmoji(score) {
   const s = Number(score)
-  if (!Number.isFinite(s)) return '🙂'
-  if (s <= 2) return '😑'
-  if (s <= 4) return '😊'
-  if (s <= 6) return '🙂'
-  if (s === 7) return '⚡'
-  if (s === 8) return '😰'
-  return '😤'
+  if (!Number.isFinite(s)) return ''
+  if (s <= 2) return ''
+  if (s <= 4) return ''
+  if (s <= 6) return ''
+  if (s === 7) return ''
+  if (s === 8) return ''
+  return ''
 }
 
 function directionLabel(dir) {

@@ -93,10 +93,18 @@ def get_knowledge_graph(user_id: str | uuid.UUID, db: Session) -> dict[str, Any]
                     "impact": ev.impact_level.value,
                 },
             )
+        events_map = {ev.id: ev for ev in events}
         for lk in links:
-            eid = f"event_{lk.event_id}"
+            eid_raw = lk.event_id
             aid = f"asset_{lk.asset_id}"
-            edges.append({"source": eid, "target": aid, "type": "AFFECTS"})
+            eid = f"event_{eid_raw}"
+            ev = events_map.get(eid_raw)
+            edges.append({
+                "source": eid,
+                "target": aid,
+                "type": "AFFECTS",
+                "impact": ev.impact_level.value if ev else "medium"
+            })
 
     for sp in shadows:
         a = sp.asset

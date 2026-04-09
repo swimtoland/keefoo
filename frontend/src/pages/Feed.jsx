@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, Inbox, Send, TrendingDown, TrendingUp } from 'lucide-react'
+import { Bot, Inbox, Send, TrendingDown, TrendingUp, Zap, Info } from 'lucide-react'
+import FeedCard from '../components/FeedCard.jsx'
 import {
   getFeed,
   getFinancialNews,
@@ -388,77 +389,15 @@ export default function Feed() {
             </div>
           ) : (
             <ul className="space-y-4">
-              {items.map((card, i) => {
-                const levelKey = card.relevance_level || 'macro'
-                const tag =
-                  t(`feed.level.${levelKey}`) !== `feed.level.${levelKey}` ? t(`feed.level.${levelKey}`) : t('feed.level.macro')
-                const title = card.event_title || t('feed.untitledEvent')
-                const score = Number(card.relevance_score)
-                const pct = Number.isFinite(score) ? Math.min(100, Math.max(0, score * 100)) : 0
-                const firstAssetId =
-                  Array.isArray(card.related_asset_ids) && card.related_asset_ids.length > 0 ? card.related_asset_ids[0] : null
-
-                const contextLines = [`· 你当前持有 100 股，成本价 1650`, `· 上次因财报买入，持仓 18 天盈利 7.3%`]
-
-                const correlated = [{ label: '📊 动销数据存疑' }, { label: '👤 管理层表态' }, { label: '📈 板块联动' }]
-
-                return (
-                  <li
-                    key={card.id}
-                    onClick={() => handleMarkRead(card.id)}
-                    className="stagger-in w-full max-w-full overflow-hidden rounded-2xl bg-white p-5 shadow-sm dark:bg-zinc-900"
-                    style={{ animationDelay: `${i * 80}ms` }}
-                  >
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <span className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-[12px] font-medium text-blue-600 dark:bg-blue-900/10 dark:text-blue-200">
-                        {tag}
-                      </span>
-                      <div className="shrink-0 text-xs font-semibold text-gray-400 dark:text-zinc-500">⚡ {Math.round(pct)}% 匹配</div>
-                    </div>
-
-                    {firstAssetId ? (
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/asset/${firstAssetId}`)}
-                        className="w-full max-w-full overflow-hidden text-left text-lg font-semibold leading-snug text-gray-900 underline decoration-transparent decoration-2 underline-offset-2 transition-colors duration-200 hover:decoration-gray-900 dark:text-white dark:hover:decoration-white break-words"
-                      >
-                        {title}
-                      </button>
-                    ) : (
-                      <h2 className="break-words text-lg font-semibold leading-snug text-gray-900 dark:text-white">{title}</h2>
-                    )}
-
-                    <p className="mt-2 break-words overflow-hidden text-[14px] leading-relaxed text-gray-500 dark:text-zinc-400">
-                      {card.relevance_note || '—'}
-                    </p>
-
-                    <div className="mt-4 w-full max-w-full overflow-hidden rounded-xl bg-gray-50 p-4 dark:bg-gray-900/50">
-                      <div className="truncate text-[12px] font-semibold text-gray-700 dark:text-zinc-200">与你的关联</div>
-                      <ul className="mt-2 space-y-1.5 break-words text-sm text-gray-600 dark:text-zinc-300">
-                        {contextLines.map((line) => (
-                          <li key={line}>{line}</li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    <div className="mt-4 flex max-w-full flex-wrap gap-2 overflow-hidden">
-                      {correlated.map((x) => (
-                        <button
-                          key={x.label}
-                          type="button"
-                          onClick={(e) => handleCorrelatedNodeClick(e, x)}
-                          className={`${relevancePillClass} cursor-pointer max-w-full`}
-                        >
-                          <span className="break-words">{x.label}</span>
-                        </button>
-                      ))}
-                      <div className="ml-auto shrink-0 text-[11px] text-gray-400 dark:text-zinc-500">
-                        <time dateTime={card.event_occurred_at || undefined}>{formatWhen(card.event_occurred_at, dateLocale)}</time>
-                      </div>
-                    </div>
-                  </li>
-                )
-              })}
+              {items.map((card) => (
+                <FeedCard 
+                  key={card.id} 
+                  item={card} 
+                  onRead={handleMarkRead}
+                  onAssetClick={(id) => navigate("/asset/" + id)}
+                  onNodeClick={handleCorrelatedNodeClick}
+                />
+              ))}
             </ul>
           )}
         </div>
@@ -488,14 +427,14 @@ export default function Feed() {
             <div className="mt-3 space-y-3">
               {[
                 {
-                  icon: '⚠️',
+                  icon: '️',
                   title: '宁德时代异动，请补充买入逻辑',
                   sub: '生成复盘依赖你的交易记录与备注',
                   action: '去补充',
                   onClick: () => navigate('/trade'),
                 },
                 {
-                  icon: '🧠',
+                  icon: '',
                   title: '完善仓位控制规则（AI 需要你的阈值）',
                   sub: '建议补充：最大回撤、加仓条件、止损线',
                   action: '去查看',

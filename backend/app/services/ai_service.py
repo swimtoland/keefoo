@@ -12,50 +12,86 @@ def _confidence_to_score(confidence: str) -> int:
     return {"high": 8, "medium": 5, "low": 3}.get((confidence or "").strip().lower(), 5)
 
 
-def _client():
+def _client(model: str = "deepseek-chat"):
     settings = get_settings()
+    
+    # 判定是否使用 Claude (Anthropic)
+    if "claude" in model.lower():
+        if not getattr(settings, "CLAUDE_API_KEY", ""):
+            raise RuntimeError("CLAUDE_API_KEY not set")
+        from anthropic import Anthropic
+        return Anthropic(api_key=settings.CLAUDE_API_KEY)
+
+    # 默认 DeepSeek (OpenAI-compatible)
     if not getattr(settings, "DEEPSEEK_API_KEY", ""):
         raise RuntimeError("DEEPSEEK_API_KEY not set")
     from openai import OpenAI  # type: ignore
-
     return OpenAI(api_key=settings.DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
 
 
-def _chat(system: str, user: str, *, max_tokens: int, temperature: float) -> str:
-    c = _client()
-    resp = c.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    return (resp.choices[0].message.content or "").strip()
+def _chat(system: str, user: str, *, max_tokens: int, temperature: float, model: str = "deepseek-chat") -> str:
+    client = _client(model)
+    
+    if "claude" in model.lower():
+        # Anthropic SDK 格式
+        resp = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system,
+            messages=[{"role": "user", "content": user}]
+        )
+        return str(resp.content[0].text).strip()
+    else:
+        # OpenAI SDK 格式
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        return (resp.choices[0].message.content or "").strip()
 
 
 def generate_smart_question(trade_info: dict, market_context: dict) -> str:
     """
-    DeepSeek 生成苏格拉底式追问（失败时由调用方 fallback 到模板逻辑）。
+    DeepSeek 生成苏格拉底式追问（L3 逻辑审判）。
+    基于市场背景、标的特性和交易行为，寻找逻辑上的「弱点」或「矛盾点」进行提问。
     """
 
     system = (
-        "你是 KeeFoo 投资复盘系统的 AI 助手。你的角色是苏格拉底式的访谈者——通过提问帮助用户梳理交易逻辑。\n\n"
-        "规则：\n"
-        "1. 问题不超过 40 个字\n"
-        "2. 基于当天市场环境反向提问，不要问通用问题\n"
-        "3. 不要给出任何投资建议或判断\n"
-        "4. 语气友好但直击要害\n"
-        "5. 只输出一个问题，不要有其他内容"
+        "你是 KeeFoo 投资复盘系统的核心 Agent —— 一个冷峻、深邃、具有苏格拉底风格的投资导师。\n"
+        "你的任务是针对用户的交易行为进行「逻辑审判」。你不需要给出建议，而是通过一个精准的问题，揭示用户决策中可能的盲点、情绪化或逻辑不自洽。\n\n"
+        "提问原则：\n"
+        "1. **直击痛点**：如果用户在利好出尽时买入，问他关于「预期兑现」的问题；如果在技术破位时买入，问他关于「安全边际」的问题。\n"
+        "2. **寻找矛盾**：对比交易行为与市场大环境。例如：大盘暴跌时逆势重仓，是基于极度自信的逻辑，还是单纯的抄底冲动？\n"
+        "3. **拒绝平庸**：不要问「你为什么买」这种宽泛问题。要问「在XX事件发生且股价已反应XX的情况下，你这笔交易锚定的确定性究竟来自哪里？」\n"
+        "4. **合规边界**：严禁提供任何投资建议，严禁预测涨跌。你的角色是提问者，不是分析师。\n\n"
+        "约束：\n"
+        "- 问题字数严格控制在 50 字以内。\n"
+        "- 语气：专业、中立、略带挑战性。\n"
+        "- 只输出问题本身，不要有任何前缀、后缀或多余解释。"
     )
-    user = (
-        f"用户在 {trade_info.get('traded_at')} 以 {trade_info.get('price')} 元 "
-        f"{trade_info.get('direction')} 了 {trade_info.get('asset_name')}（{trade_info.get('asset_code')}）。\n"
-        f"当天市场环境：{market_context}\n"
-        "请生成一个苏格拉底式追问。"
+    
+    # 构造更丰富的上下文
+    asset_name = trade_info.get('asset_name', '该标的')
+    price = trade_info.get('price', '未知')
+    direction = "买入" if trade_info.get('direction') == "buy" else "卖出"
+    
+    user_prompt = (
+        f"交易行为：在价格 {price} 元时{direction}了 {asset_name}。\n"
+        f"市场背景：{json.dumps(market_context, ensure_ascii=False)}\n"
+        "请基于以上信息，生成一个能够引发用户深度反思逻辑漏洞的 L3 级苏格拉底追问。"
     )
-    return _chat(system, user, max_tokens=100, temperature=0.7)
+    
+    try:
+        return _chat(system, user_prompt, max_tokens=150, temperature=0.8)
+    except Exception as e:
+        print(f"L3 AI Question Generation failed: {e}")
+        return f"这笔 {asset_name} 的交易，你当时最核心的决策锚点是什么？"
 
 
 def _extract_json(text: str) -> Optional[dict[str, Any]]:
@@ -184,4 +220,3 @@ def generate_scenario(asset_info: dict, event_info: dict) -> dict:
     if direction not in ("positive", "negative", "neutral"):
         direction = "neutral"
     return {"scenario_text": scenario_text[:60], "direction": direction}
-

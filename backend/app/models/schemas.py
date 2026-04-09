@@ -439,6 +439,29 @@ class NoteMoveRequest(BaseModel):
     notebook_id: Optional[uuid.UUID] = None
 
 
+
+# --- Strategy Manual ---
+
+class StrategyCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    content: str
+    strategy_type: str = Field(default="custom", max_length=64)
+    is_active: bool = True
+
+
+class StrategyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    title: str
+    content: str
+    strategy_type: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
 # --- Calendar / Reminders ---
 
 

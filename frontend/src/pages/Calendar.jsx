@@ -57,13 +57,13 @@ function cnWeekdayLong(i) {
 
 function emotionEmoji(score) {
   const s = Number(score)
-  if (!Number.isFinite(s)) return '🙂'
-  if (s <= 2) return '😑'
-  if (s <= 4) return '😊'
-  if (s <= 6) return '🙂'
-  if (s === 7) return '⚡'
-  if (s === 8) return '😰'
-  return '😤'
+  if (!Number.isFinite(s)) return ''
+  if (s <= 2) return ''
+  if (s <= 4) return ''
+  if (s <= 6) return ''
+  if (s === 7) return ''
+  if (s === 8) return ''
+  return ''
 }
 
 function formatZhDayHeader(d) {
@@ -585,7 +585,7 @@ export default function Calendar() {
                                     ].join(' ')}
                                     style={!r.is_completed ? { color: ACCENT } : undefined}
                                   >
-                                    {urgent && !r.is_completed ? '⚠ ' : ''}
+                                    {urgent && !r.is_completed ? ' ' : ''}
                                     {r.title}
                                   </div>
                                   <div className="mt-0.5 text-[10px] text-[#999999] dark:text-zinc-500">
@@ -816,7 +816,7 @@ export default function Calendar() {
                             ].join(' ')}
                             aria-label="toggle"
                           >
-                            {r.is_completed ? '✓' : ''}
+                            {r.is_completed ? '' : ''}
                           </button>
 
                           <div className="min-w-0 flex-1">

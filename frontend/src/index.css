@@ -177,3 +177,21 @@
 .login-error-fade {
   animation: loginErrorFadeIn 0.35s ease-out forwards;
 }
+
+@keyframes node-pulse {
+  0% { transform: scale(1); filter: drop-shadow(0 0 0px rgba(99, 102, 241, 0)); }
+  50% { transform: scale(1.1); filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.4)); }
+  100% { transform: scale(1); filter: drop-shadow(0 0 0px rgba(99, 102, 241, 0)); }
+}
+
+.animate-pulse-node {
+  animation: node-pulse 2s infinite ease-in-out;
+}
+
+@keyframes edge-dash-flow {
+  to { stroke-dashoffset: -20; }
+}
+
+.animate-edge-flow {
+  animation: edge-dash-flow 1s linear infinite;
+}

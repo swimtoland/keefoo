@@ -96,11 +96,11 @@ export function TradeWizard({ open, onClose }) {
 
   const moodOptions = useMemo(
     () => [
-      { key: 'calm', label: '平静', emoji: '😊', Icon: Smile, emotion_score: 3 },
-      { key: 'excited', label: '兴奋', emoji: '⚡', Icon: Zap, emotion_score: 7 },
-      { key: 'anxious', label: '焦虑', emoji: '😰', Icon: AlertTriangle, emotion_score: 8 },
-      { key: 'angry', label: '愤怒', emoji: '😤', Icon: Flame, emotion_score: 9 },
-      { key: 'bored', label: '无聊', emoji: '😑', Icon: Meh, emotion_score: 2 },
+      { key: 'calm', label: '平静', emoji: '', Icon: Smile, emotion_score: 3 },
+      { key: 'excited', label: '兴奋', emoji: '', Icon: Zap, emotion_score: 7 },
+      { key: 'anxious', label: '焦虑', emoji: '', Icon: AlertTriangle, emotion_score: 8 },
+      { key: 'angry', label: '愤怒', emoji: '', Icon: Flame, emotion_score: 9 },
+      { key: 'bored', label: '无聊', emoji: '', Icon: Meh, emotion_score: 2 },
     ],
     [],
   )
@@ -108,12 +108,12 @@ export function TradeWizard({ open, onClose }) {
   const moodHint = useMemo(() => {
     if (emotionScore === null) return null
     if (emotionScore === 7)
-      return { tone: 'warn', text: t('tradeWizard.moodHintExcited') || '⚠ 兴奋时容易追高，注意控制仓位。' }
+      return { tone: 'warn', text: t('tradeWizard.moodHintExcited') || ' 兴奋时容易追高，注意控制仓位。' }
     if (emotionScore === 8)
-      return { tone: 'risk', text: t('tradeWizard.moodHintAnxious') || '⚠ 焦虑时决策质量下降，建议观望。' }
+      return { tone: 'risk', text: t('tradeWizard.moodHintAnxious') || ' 焦虑时决策质量下降，建议观望。' }
     if (emotionScore >= 9)
-      return { tone: 'danger', text: t('tradeWizard.moodHintAngry') || '⛔ 情绪化交易是亏损的主要来源，强烈建议暂停。' }
-    return { tone: 'good', text: t('tradeWizard.moodHintGood') || '✓ 心态良好，祝交易顺利。' }
+      return { tone: 'danger', text: t('tradeWizard.moodHintAngry') || ' 情绪化交易是亏损的主要来源，强烈建议暂停。' }
+    return { tone: 'good', text: t('tradeWizard.moodHintGood') || ' 心态良好，祝交易顺利。' }
   }, [emotionScore, t])
 
   const hintCls =
@@ -750,7 +750,7 @@ export function TradeWizard({ open, onClose }) {
 
                       <div className="mt-4 space-y-4">
                         <div>
-                          <div className="text-[12.5px] font-bold text-[#1A1A1A] dark:text-white">📝 笔记</div>
+                          <div className="text-[12.5px] font-bold text-[#1A1A1A] dark:text-white"> 笔记</div>
                           <textarea
                             rows={4}
                             value={execNote}
@@ -761,7 +761,7 @@ export function TradeWizard({ open, onClose }) {
                         </div>
 
                         <div>
-                          <div className="text-[12.5px] font-bold text-[#1A1A1A] dark:text-white">📋 复盘笔记</div>
+                          <div className="text-[12.5px] font-bold text-[#1A1A1A] dark:text-white"> 复盘笔记</div>
                           <textarea
                             rows={4}
                             value={reviewNote}
@@ -772,7 +772,7 @@ export function TradeWizard({ open, onClose }) {
                         </div>
 
                         <div>
-                          <div className="text-[12.5px] font-bold text-[#1A1A1A] dark:text-white">⚠ 错误标签</div>
+                          <div className="text-[12.5px] font-bold text-[#1A1A1A] dark:text-white"> 错误标签</div>
                           <div className="mt-2 flex items-center gap-2">
                             <input
                               type="text"

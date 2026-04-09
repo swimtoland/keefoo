@@ -24,6 +24,8 @@ class Settings(BaseModel):
     DEBUG: bool = Field(default=True)
     SECRET_KEY: str = Field(default="dev-secret-change-in-production-use-32chars")
     DEEPSEEK_API_KEY: str = Field(default="")
+    CLAUDE_API_KEY: str = Field(default="")
+    TUSHARE_TOKEN: str = Field(default="")
     AKSHARE_CACHE_TTL: int = Field(default=60, ge=1)
 
 
@@ -37,5 +39,7 @@ def get_settings() -> Settings:
         DEBUG=str(debug_raw).lower() in ("true", "1", "yes"),
         SECRET_KEY=os.getenv("SECRET_KEY", "dev-secret-change-in-production-use-32chars"),
         DEEPSEEK_API_KEY=os.getenv("DEEPSEEK_API_KEY", ""),
+        CLAUDE_API_KEY=os.getenv("CLAUDE_API_KEY", ""),
+        TUSHARE_TOKEN=os.getenv("TUSHARE_TOKEN", ""),
         AKSHARE_CACHE_TTL=int(os.getenv("AKSHARE_CACHE_TTL", "60") or "60"),
     )

@@ -143,6 +143,7 @@ export default function Chart() {
   const candleSeriesRef = useRef(null)
   const volumeSeriesRef = useRef(null)
 
+  const [chartReady, setChartReady] = useState(false)
   const [assetQuery, setAssetQuery] = useState('')
   const [assetResults, setAssetResults] = useState([])
   const [selectedAsset, setSelectedAsset] = useState(null)
@@ -223,6 +224,7 @@ export default function Chart() {
           wickDownColor: '#22C55E',
         })
         candleSeriesRef.current = series
+        setChartReady(true)
         if (typeof chart.addHistogramSeries === 'function') {
           const vol = chart.addHistogramSeries({
             priceFormat: { type: 'volume' },
@@ -264,6 +266,7 @@ export default function Chart() {
       chartRef.current = null
       candleSeriesRef.current = null
       volumeSeriesRef.current = null
+      setChartReady(false)
     }
   }, [])
 
@@ -297,7 +300,7 @@ export default function Chart() {
 
   useEffect(() => {
     const series = candleSeriesRef.current
-    if (!series) return
+    if (!series || !chartReady) return
     if (!Array.isArray(kline) || kline.length === 0) return
 
     const candleData = kline.map((item) => ({
@@ -321,7 +324,7 @@ export default function Chart() {
     } catch {
       // ignore
     }
-  }, [kline])
+  }, [kline, chartReady])
 
   useEffect(() => {
     let cancelled = false

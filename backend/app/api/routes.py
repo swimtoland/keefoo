@@ -364,27 +364,13 @@ def create_trade(
     assert trade is not None
     assert trade.asset is not None
     near_events = load_events_near_trade(db, trade.asset_id, trade.traded_at)
-    settings = get_settings()
-    if getattr(settings, "DEEPSEEK_API_KEY", ""):
-        try:
-            trade_info = {
-                "traded_at": trade.traded_at.isoformat(),
-                "price": float(trade.price),
-                "direction": trade.direction.value if trade.direction else "",
-                "asset_name": trade.asset.name,
-                "asset_code": trade.asset.code,
-            }
-            market_context = {
-                "indices": get_market_indices(),
-                "realtime": get_stock_realtime(trade.asset.code),
-                "news": get_financial_news(count=5),
-                "near_events": [{"title": e.title, "type": e.event_type.value} for e in (near_events or [])[:3]],
-            }
-            trade.agent_question_text = generate_smart_question(trade_info, market_context)
-        except Exception:
-            trade.agent_question_text = generate_question(trade, trade.asset, near_events)
-    else:
-        trade.agent_question_text = generate_question(trade, trade.asset, near_events)
+    market_context = {
+        "indices": get_market_indices(),
+        "realtime": get_stock_realtime(trade.asset.code),
+        "news": get_financial_news(count=5),
+        "near_events": [{"title": e.title, "type": e.event_type.value} for e in (near_events or [])[:3]],
+    }
+    trade.agent_question_text = generate_question(trade, trade.asset, near_events, extra_context=market_context, db=db)
     trade.agent_question_sent = True
     trade.agent_question_sent_at = datetime.now(timezone.utc)
     db.commit()

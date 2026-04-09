@@ -211,6 +211,24 @@ export function deleteTag(userId, tagId) {
   return api.delete(`/tags/${tagId}`, { params: { user_id: userId } }).then((r) => r.data)
 }
 
+
+// --- Strategy Manual ---
+
+export function getStrategies(userId) {
+  return api.get('/strategies', { params: { user_id: userId } }).then((r) => r.data)
+}
+
+export function createStrategy(userId, data) {
+  return api.post('/strategies', data, { params: { user_id: userId } }).then((r) => r.data)
+}
+
+export function updateStrategy(userId, strategyId, data) {
+  return api.put(`/strategies/${strategyId}`, data, { params: { user_id: userId } }).then((r) => r.data)
+}
+
+export function deleteStrategy(strategyId, userId) {
+  return api.delete(`/strategies/${strategyId}`, { params: { user_id: userId } }).then((r) => r.data)
+}
 // --- Calendar / Reminders ---
 
 export function getCalendarMonth(userId, year, month) {

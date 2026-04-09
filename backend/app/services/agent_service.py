@@ -1,161 +1,132 @@
-"""Agent 苏格拉底追问与回复解析（MVP：规则引擎）。"""
+"""
+Agent 协调器 (Orchestrator)：管理 L1-L3 团队。
+"""
 
 from __future__ import annotations
-
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
-
 from app.models import models as m
+from app.agents.core import L1RuleAgent, L2GraphAgent, L3LogicAgent
+from app.core.config import get_settings
 
-_IMPACT_RANK = {
-    m.ImpactLevel.high: 3,
-    m.ImpactLevel.medium: 2,
-    m.ImpactLevel.low: 1,
-}
+class AgentOrchestrator:
+    def __init__(self):
+        self.l1 = L1RuleAgent("Sentinel", "Checker")
+        self.l2 = L2GraphAgent("Weaver", "Linker")
+        self.l3 = L3LogicAgent("Judge", "Final Judge")
 
+    def run_full_audit(self, trade: m.Trade, asset: m.Asset, events: list[m.Event], market_context: dict, db: Session | None = None) -> str:
+        """
+        运行完整的 Agent 团队审计流程。
+        """
+        # 1. 整理基础数据
+        trade_info = {
+            "asset_name": asset.name,
+            "asset_code": asset.code,
+            "price": float(trade.price),
+            "direction": trade.direction.value if trade.direction else "buy",
+            "quantity": float(trade.quantity) if trade.quantity else 0,
+            "traded_at": trade.traded_at.isoformat() if trade.traded_at else None
+        }
+        
+        # 2. L1 Sentinel 生成事实报告
+        l1_report = self.l1.process(trade_info, market_context)
+        
+        # 3. L2 Weaver 生成情报报告
+        event_list = [{"title": e.title, "type": e.event_type.value if e.event_type else "unknown", "impact": e.impact_level.value if e.impact_level else "medium"} for e in events]
+        l2_report = self.l2.process(trade_info, event_list)
+        
+        # 4. 加载用户策略手册 (Strategy Manual)
+        strategy_manual = "（未定义个人策略）"
+        if db and trade.user_id:
+            strategies = db.query(m.Strategy).filter(m.Strategy.user_id == trade.user_id, m.Strategy.is_active == True).all()
+            if strategies:
+                strategy_manual = "\n".join([f"- {s.title}: {s.content}" for s in strategies])
 
-def load_events_near_trade(
-    db: Session,
-    asset_id: uuid.UUID,
-    traded_at: datetime,
-    *,
-    days: int = 3,
-) -> list[m.Event]:
-    """查询标的在交易日前后 ``days`` 天内、通过 event_asset_links 关联的事件。"""
-    if traded_at.tzinfo is None:
-        traded_at = traded_at.replace(tzinfo=timezone.utc)
-    start = traded_at - timedelta(days=days)
-    end = traded_at + timedelta(days=days)
-    rows = (
+        # 5. L3 Judge 逻辑审判 (核心追问)
+        user_note = trade.decision_note or "（无自述逻辑）"
+        
+        # 增强 L3 上下文：注入策略手册
+        l3_context = f"{l1_report}\n\n【用户个人策略手册】：\n{strategy_manual}"
+        
+        final_question = self.l3.process(user_note, l3_context, l2_report, trade_info)
+        
+        return final_question
+
+# 单例协调器
+orchestrator = AgentOrchestrator()
+
+def load_events_near_trade(db: Session, asset_id: uuid.UUID, traded_at: datetime, days_before: int = 7, days_after: int = 1) -> list[m.Event]:
+    """
+    加载交易前后指定天数内与该资产相关的事件。
+    """
+    start_date = traded_at - timedelta(days=days_before)
+    end_date = traded_at + timedelta(days=days_after)
+    
+    events = (
         db.query(m.Event)
         .join(m.EventAssetLink, m.EventAssetLink.event_id == m.Event.id)
         .filter(
             m.EventAssetLink.asset_id == asset_id,
-            m.Event.occurred_at >= start,
-            m.Event.occurred_at <= end,
+            m.Event.occurred_at >= start_date,
+            m.Event.occurred_at <= end_date
         )
         .order_by(m.Event.occurred_at.desc())
         .all()
     )
-    return rows
+    return events
 
-
-def _fmt_price(price: float) -> str:
-    if abs(price - round(price)) < 1e-6:
-        return str(int(round(price)))
-    s = f"{price:.2f}"
-    return s.rstrip("0").rstrip(".")
-
-
-def _pick_strongest_event(events: list[m.Event]) -> m.Event | None:
-    if not events:
-        return None
-    return max(
-        events,
-        key=lambda e: (_IMPACT_RANK.get(e.impact_level, 0), e.occurred_at),
-    )
-
-
-def _truncate(s: str, max_len: int = 40) -> str:
-    s = s.strip()
-    if len(s) <= max_len:
-        return s
-    return s[: max_len - 1] + "…"
-
-
-def generate_question(trade: m.Trade, asset: m.Asset, events: list[m.Event]) -> str:
+def parse_user_reply(reply_text: str) -> dict:
     """
-    根据交易当天的市场环境生成苏格拉底式追问。
-    自动生成长度不超过 40 字（演示种子数据可更长，由调用方直接写入）。
+    解析用户回复的简单启发式 Fallback。
     """
-    sector = (asset.sector or "相关").strip()
-    name = asset.name.strip()
-    price_s = _fmt_price(float(trade.price))
-
-    ev = _pick_strongest_event(events)
-    if ev is None:
-        return _truncate(f"这笔{name}的交易，你当时最核心的买入逻辑是什么？")
-
-    title = (ev.title or "") + (ev.summary or "")
-    et = ev.event_type
-
-    if et in (m.EventType.policy, m.EventType.macro) or any(
-        k in title for k in ("降准", "降息", "政策", "国务院")
-    ):
-        q = (
-            f"你在{price_s}建仓了{name}，当天{sector}板块有政策利好，"
-            f"你是基于中线政策逻辑，还是短线技术突破？"
-        )
-        return _truncate(q)
-
-    if et == m.EventType.earnings or any(k in title for k in ("财报", "年报", "业绩", "营收")):
-        q = f"你在{name}财报发布当天交易，是提前布局还是跟随市场反应？"
-        return _truncate(q)
-
-    if et == m.EventType.executive or any(k in title for k in ("高管", "辞职", "变动")):
-        q = f"你在{name}高管变动期间交易，是认为影响可控，还是另有逻辑？"
-        return _truncate(q)
-
-    return _truncate(f"这笔{name}的交易，你当时最核心的买入逻辑是什么？")
-
-
-def _confidence_to_score(confidence: str) -> int:
-    return {"high": 8, "medium": 5, "low": 3}.get(confidence, 5)
-
-
-def parse_user_reply(reply_text: str) -> dict[str, Any]:
-    """
-    解析用户回复，提取结构化意图（关键词规则，后续可接 Claude）。
-    """
-    text = reply_text.strip()
-
-    decision_type = "fundamental"
-    if any(k in text for k in ("政策", "利好", "消息", "降准", "降息")):
-        decision_type = "event_driven"
-    elif any(k in text for k in ("突破", "均线", "技术", "K线", "形态")):
+    text = reply_text.lower()
+    
+    # 简单的关键词匹配逻辑
+    decision_type = "sentiment"
+    if any(k in text for k in ["均线", "突破", "支撑", "压力", "技术", "macd", "kdj"]):
         decision_type = "technical"
-    elif any(k in text for k in ("感觉", "直觉", "氛围", "情绪")):
-        decision_type = "sentiment"
-    elif any(k in text for k in ("财报", "年报", "业绩", "盈利")):
+    elif any(k in text for k in ["财报", "业绩", "估值", "利润", "基本面", "研报"]):
         decision_type = "fundamental"
-
-    time_horizon = "medium"
-    if any(k in text for k in ("长期", "长线", "价值", "持有几年")):
-        time_horizon = "long"
-    if any(k in text for k in ("短线", "做T", "明天", "日内", "几天")):
-        time_horizon = "short"
-    if any(k in text for k in ("日内", "分时", "当天")):
-        time_horizon = "intraday"
-
-    confidence = "medium"
-    if any(k in text for k in ("赌", "博一", "试试", "碰碰运气", "赌一把")):
-        confidence = "low"
-    if any(k in text for k in ("确定", "一定", "肯定", "非常有把握")):
-        confidence = "high"
-
+    elif any(k in text for k in ["消息", "政策", "新闻", "利好", "利空", "公告"]):
+        decision_type = "event_driven"
+        
+    confidence_score = 5
+    if any(k in text for k in ["确信", "肯定", "看好", "必须", "强烈"]):
+        confidence_score = 8
+    elif any(k in text for k in ["试试", "可能", "大概", "直觉", "感觉"]):
+        confidence_score = 3
+        
     emotion_score = 5
-    if any(k in text for k in ("赌", "博", "慌", "怕", "焦虑")):
-        emotion_score = min(10, emotion_score + 3)
-    if any(k in text for k in ("兴奋", "激动", "开心")):
-        emotion_score = min(10, emotion_score + 2)
-    if any(k in text for k in ("冷静", "淡定", "理性")):
-        emotion_score = max(1, emotion_score - 1)
-    emotion_score = max(1, min(10, emotion_score))
-
-    parts = [
-        f"类型:{decision_type}",
-        f"周期:{time_horizon}",
-        f"信心:{confidence}",
-    ]
-    structured_note = "｜".join(parts) + f"。摘要：{text[:200]}"
-
+    if any(k in text for k in ["兴奋", "激动", "冲动", "赶不上", "抢"]):
+        emotion_score = 8
+    elif any(k in text for k in ["冷静", "观望", "平和"]):
+        emotion_score = 2
+        
     return {
         "decision_type": decision_type,
-        "time_horizon": time_horizon,
-        "confidence": confidence,
         "emotion_score": emotion_score,
-        "structured_note": structured_note,
-        "confidence_score": _confidence_to_score(confidence),
+        "confidence_score": confidence_score,
+        "structured_note": reply_text[:200]
     }
+
+def generate_question(trade: m.Trade, asset: m.Asset, events: list[m.Event], extra_context: dict | None = None, db: Session | None = None) -> str:
+    """
+    KeeFoo Agent 团队流水线入口。
+    """
+    settings = get_settings()
+    has_ai = bool(getattr(settings, "DEEPSEEK_API_KEY", ""))
+    
+    if not has_ai:
+        # Fallback to simple rule if no API key
+        return f"这笔 {asset.name} 的交易，你当时最核心的买入逻辑是什么？"
+
+    try:
+        market_context = extra_context or {}
+        return orchestrator.run_full_audit(trade, asset, events, market_context, db=db)
+    except Exception as e:
+        print(f"Agent Orchestrator failed: {e}")
+        return f"针对 {asset.name} 的这笔交易，你当时认为最重要的信息变量是什么？"

@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 
 from app.api.routes import router
 from app.core.config import get_settings
@@ -42,13 +43,8 @@ app.include_router(router, prefix="/api/v1")
 
 
 @app.get("/")
-def root() -> dict[str, str]:
-    return {
-        "message": f"Welcome to {settings.APP_NAME} — 投资复盘与原子信息图谱",
-        "docs": "/docs",
-        "health": "/health",
-        "api": "/api/v1",
-    }
+def root() -> RedirectResponse:
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/health")

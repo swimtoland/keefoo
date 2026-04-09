@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from app.core.config import get_settings
+from app.services import tushare_service
 
 _cache: dict[str, dict[str, Any]] = {}
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -348,32 +349,48 @@ def get_stock_kline(code: str, period: str = "daily", count: int = 120) -> list[
     n = max(1, min(n, 2000))
 
     def _fetch():
-        import akshare as ak  # type: ignore
+        # 1. 优先尝试 Tushare
+        # 根据 count 计算大概的开始日期
+        end_dt = datetime.now()
+        start_dt = end_dt - timedelta(days=n * 1.5 + 10)
+        start_str = start_dt.strftime("%Y%m%d")
+        end_str = end_dt.strftime("%Y%m%d")
+        
+        ts_data = tushare_service.get_daily_stock_kline(symbol, start_str, end_str)
+        if ts_data:
+            return ts_data[-n:]
 
-        df = ak.stock_zh_a_hist(symbol=symbol, period=p, adjust="qfq")
-        rows = df.to_dict(orient="records")
-        if not rows:
+        # 2. Fallback 到 AKShare
+        try:
+            import akshare as ak  # type: ignore
+
+            df = ak.stock_zh_a_hist(symbol=symbol, period=p, adjust="qfq")
+            rows = df.to_dict(orient="records")
+            if not rows:
+                return []
+            tail = rows[-n:]
+            out: list[dict] = []
+            for r in tail:
+                d = _pick(r, "日期", "date")
+                open_ = _to_float(_pick(r, "开盘", "open")) or 0.0
+                high = _to_float(_pick(r, "最高", "high")) or 0.0
+                low = _to_float(_pick(r, "最低", "low")) or 0.0
+                close = _to_float(_pick(r, "收盘", "close")) or 0.0
+                vol = _to_float(_pick(r, "成交量", "volume")) or 0.0
+                out.append(
+                    {
+                        "date": str(d),
+                        "open": float(open_),
+                        "high": float(high),
+                        "low": float(low),
+                        "close": float(close),
+                        "volume": float(vol),
+                    }
+                )
+            return out
+        except Exception as e:
+            print(f"AKShare error for {symbol} kline: {e}")
             return []
-        tail = rows[-n:]
-        out: list[dict] = []
-        for r in tail:
-            d = _pick(r, "日期", "date")
-            open_ = _to_float(_pick(r, "开盘", "open")) or 0.0
-            high = _to_float(_pick(r, "最高", "high")) or 0.0
-            low = _to_float(_pick(r, "最低", "low")) or 0.0
-            close = _to_float(_pick(r, "收盘", "close")) or 0.0
-            vol = _to_float(_pick(r, "成交量", "volume")) or 0.0
-            out.append(
-                {
-                    "date": str(d),
-                    "open": float(open_),
-                    "high": float(high),
-                    "low": float(low),
-                    "close": float(close),
-                    "volume": float(vol),
-                }
-            )
-        return out
 
     data = cached(f"kline:{symbol}:{p}:{n}", 300, _fetch, max_wait_seconds=10.0)
     return data or _fallback_stock_kline(symbol, p, n)
@@ -443,6 +460,10 @@ def get_stock_info(code: str) -> dict:
         return {}
 
     def _fetch():
+        # 1. 优先尝试 Tushare
+        ts_info = tushare_service.get_stock_basic_info(symbol)
+        
+        # 2. 使用 AKShare 补充或作为 Fallback
         import akshare as ak  # type: ignore
 
         df = ak.stock_individual_info_em(symbol=symbol)

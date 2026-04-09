@@ -64,7 +64,9 @@ function eventTitleLabel(node) {
 }
 
 function shadowLabel(node) {
-  const name = (node.label || '').replace(/\([^)]*\)\s*$/, '').trim() || '标的'
+  // Use a simpler approach to avoid parenthesis imbalance in simple tools
+  const raw = node.label || ''
+  const name = raw.split('(')[0].trim() || '标的'
   return `${name}(观望)`
 }
 
@@ -89,10 +91,12 @@ function linkDistance(d) {
 }
 
 function edgeStroke(d) {
-  if (d.type === 'INVOLVES') return { stroke: '#CBD5E0', width: 1.5, dash: null }
-  if (d.type === 'AFFECTS') return { stroke: '#E2E8F0', width: 1, dash: '4,4' }
-  if (d.type === 'TRACKS') return { stroke: '#E2E8F0', width: 1, dash: '2,4' }
-  return { stroke: '#E2E8F0', width: 1, dash: null }
+  const isHighImpact = d.impact === 'high' || (d.weight && d.weight > 0.8)
+  const baseWidth = isHighImpact ? 2 : 1
+  if (d.type === 'INVOLVES') return { stroke: '#CBD5E0', width: baseWidth + 0.5, dash: null }
+  if (d.type === 'AFFECTS') return { stroke: isHighImpact ? '#6366F1' : '#E2E8F0', width: baseWidth, dash: '4,4' }
+  if (d.type === 'TRACKS') return { stroke: '#E2E8F0', width: baseWidth, dash: '2,4' }
+  return { stroke: '#E2E8F0', width: baseWidth, dash: null }
 }
 
 function linkEndpoints(d) {
@@ -185,6 +189,8 @@ export default function Graph() {
       source: e.source,
       target: e.target,
       type: e.type,
+      impact: e.impact,
+      weight: e.weight
     }))
 
     const cx = width / 2
@@ -235,7 +241,7 @@ export default function Graph() {
       .selectAll('line.graph-edge')
       .data(links, (d, i) => `${d.source}-${d.target}-${i}`)
       .join('line')
-      .attr('class', 'graph-edge')
+      .attr('class', d => 'graph-edge ' + (d.impact === 'high' ? 'animate-edge-flow' : ''))
       .attr('stroke-linecap', 'round')
       .attr('opacity', 0.25)
       .attr('stroke', IDLE_EDGE_STROKE)
@@ -244,7 +250,7 @@ export default function Graph() {
       .selectAll('g.node')
       .data(nodes, (d) => d.id)
       .join('g')
-      .attr('class', 'node')
+      .attr('class', d => 'node ' + (d.impact === 'high' ? 'animate-pulse-node' : ''))
 
     nodeSel.each(function (d) {
       const g = d3.select(this)
@@ -609,94 +615,94 @@ export default function Graph() {
             </div>
 
             {infoNode && (
-            <div className="pointer-events-auto absolute bottom-4 right-4 z-20 max-w-sm rounded-xl border border-[#EEE] bg-white p-4 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-[#999] dark:text-zinc-500">
-                {infoNode.type === 'trade'
-                  ? tr('graph.nodeTrade')
-                  : infoNode.type === 'event'
-                    ? tr('graph.nodeEvent')
-                    : infoNode.type === 'shadow'
-                      ? tr('graph.nodeShadow')
-                      : tr('graph.nodeGeneric')}
-              </div>
-              <div className="mt-2 space-y-1.5 text-[13px] leading-relaxed text-[#333] dark:text-zinc-300">
-                <div>
-                  <span className="text-[#999] dark:text-zinc-500">{tr('graph.fieldId')}</span>
-                  {infoNode.id}
+              <div className="pointer-events-auto absolute bottom-4 right-4 z-20 max-w-sm rounded-xl border border-[#EEE] bg-white p-4 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-[#999] dark:text-zinc-500">
+                  {infoNode.type === 'trade'
+                    ? tr('graph.nodeTrade')
+                    : infoNode.type === 'event'
+                      ? tr('graph.nodeEvent')
+                      : infoNode.type === 'shadow'
+                        ? tr('graph.nodeShadow')
+                        : tr('graph.nodeGeneric')}
                 </div>
-                {infoNode.label != null && (
+                <div className="mt-2 space-y-1.5 text-[13px] leading-relaxed text-[#333] dark:text-zinc-300">
                   <div>
-                    <span className="text-[#999] dark:text-zinc-500">{tr('graph.fieldLabel')}</span>
-                    {infoNode.label}
+                    <span className="text-[#999] dark:text-zinc-500">{tr('graph.fieldId')}</span>
+                    {infoNode.id}
                   </div>
-                )}
-                {infoNode.code != null && (
-                  <div>
-                    <span className="text-[#999] dark:text-zinc-500">{tr('graph.fieldCode')}</span>
-                    {infoNode.code}
-                  </div>
-                )}
-                {infoNode.direction != null && (
-                  <div>
-                    <span className="text-[#999] dark:text-zinc-500">{tr('graph.fieldDirection')}</span>
-                    {infoNode.direction}
-                  </div>
-                )}
-                {infoNode.impact != null && (
-                  <div>
-                    <span className="text-[#999] dark:text-zinc-500">{tr('graph.fieldImpact')}</span>
-                    {infoNode.impact}
-                  </div>
-                )}
-                {infoNode.shadow_type != null && (
-                  <div>
-                    <span className="text-[#999] dark:text-zinc-500">{tr('graph.fieldType')}</span>
-                    {infoNode.shadow_type}
-                  </div>
-                )}
+                  {infoNode.label != null && (
+                    <div>
+                      <span className="text-[#999] dark:text-zinc-500">{tr('graph.fieldLabel')}</span>
+                      {infoNode.label}
+                    </div>
+                  )}
+                  {infoNode.code != null && (
+                    <div>
+                      <span className="text-[#999] dark:text-zinc-500">{tr('graph.fieldCode')}</span>
+                      {infoNode.code}
+                    </div>
+                  )}
+                  {infoNode.direction != null && (
+                    <div>
+                      <span className="text-[#999] dark:text-zinc-500">{tr('graph.fieldDirection')}</span>
+                      {infoNode.direction}
+                    </div>
+                  )}
+                  {infoNode.impact != null && (
+                    <div>
+                      <span className="text-[#999] dark:text-zinc-500">{tr('graph.fieldImpact')}</span>
+                      {infoNode.impact}
+                    </div>
+                  )}
+                  {infoNode.shadow_type != null && (
+                    <div>
+                      <span className="text-[#999] dark:text-zinc-500">{tr('graph.fieldType')}</span>
+                      {infoNode.shadow_type}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="mt-3 text-[12px] text-[#999] underline hover:text-[#333] dark:text-zinc-500 dark:hover:text-zinc-300"
+                  onClick={() => setInfoNode(null)}
+                >
+                  {tr('graph.close')}
+                </button>
               </div>
-              <button
-                type="button"
-                className="mt-3 text-[12px] text-[#999] underline hover:text-[#333] dark:text-zinc-500 dark:hover:text-zinc-300"
-                onClick={() => setInfoNode(null)}
-              >
-                {tr('graph.close')}
-              </button>
-            </div>
             )}
-          </div>
 
-          <aside
-            className="absolute left-full top-0 z-10 ml-4 w-[240px] rounded-xl border border-[#EEE] bg-white px-4 py-3 text-[12px] shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
-            aria-label={tr('graph.legendTitle')}
-          >
-            <div className="mb-2 font-semibold text-[#666] dark:text-zinc-400">{tr('graph.legendTitle')}</div>
-            <ul className="space-y-2 text-[#555] dark:text-zinc-300">
-              <li className="flex items-center gap-2">
-                <span className="h-3 w-3 shrink-0 rounded-full bg-[#1E293B]" />
-                {tr('graph.legendAsset')}
-              </li>
-              <li className="flex items-center gap-2">
-                <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#15803D]" />
-                {tr('graph.legendBuy')}
-              </li>
-              <li className="flex items-center gap-2">
-                <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#B91C1C]" />
-                {tr('graph.legendSell')}
-              </li>
-              <li className="flex items-center gap-2">
-                <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#B45309]" />
-                {tr('graph.legendEvent')}
-              </li>
-              <li className="flex items-center gap-2">
-                <span className="inline-block h-3 w-3 rounded-full border-2 border-dashed border-[#57534E]" />
-                {tr('graph.legendShadow')}
-              </li>
-            </ul>
-            <div className="mt-3 border-t border-[#F0F0F0] pt-2 text-[10px] leading-snug text-[#AAA] dark:border-zinc-800 dark:text-zinc-500">
-              {tr('graph.edgeTypes')}
-            </div>
-          </aside>
+            <aside
+              className="pointer-events-auto absolute right-4 top-4 z-10 w-[240px] rounded-xl border border-[#EEE] bg-white px-4 py-3 text-[12px] shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
+              aria-label={tr('graph.legendTitle')}
+            >
+              <div className="mb-2 font-semibold text-[#666] dark:text-zinc-400">{tr('graph.legendTitle')}</div>
+              <ul className="space-y-2 text-[#555] dark:text-zinc-300">
+                <li className="flex items-center gap-2">
+                  <span className="h-3 w-3 shrink-0 rounded-full bg-[#1E293B]" />
+                  {tr('graph.legendAsset')}
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#15803D]" />
+                  {tr('graph.legendBuy')}
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#B91C1C]" />
+                  {tr('graph.legendSell')}
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#B45309]" />
+                  {tr('graph.legendEvent')}
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 rounded-full border-2 border-dashed border-[#57534E]" />
+                  {tr('graph.legendShadow')}
+                </li>
+              </ul>
+              <div className="mt-3 border-t border-[#F0F0F0] pt-2 text-[10px] leading-snug text-[#AAA] dark:border-zinc-800 dark:text-zinc-500">
+                {tr('graph.edgeTypes')}
+              </div>
+            </aside>
+          </div>
         </div>
       )}
     </div>
