@@ -14,14 +14,25 @@ import { useAuth } from '../contexts/AuthContext.jsx'
 import { useUiPreferences } from '../contexts/UiPreferencesContext.jsx'
 import { useToast } from '../components/Toast.jsx'
 
+const DEFAULT_INDICES = [
+  { name: '上证指数', name_en: 'SSE Composite', code: '000001', price: 3050.0, change_pct: 0.32 },
+  { name: '深证成指', name_en: 'SZSE Component', code: '399001', price: 9550.0, change_pct: -0.18 },
+  { name: '沪深300', name_en: 'CSI 300', code: '000300', price: 3580.0, change_pct: 0.41 },
+  { name: '创业板指', name_en: 'ChiNext', code: '399006', price: 1950.0, change_pct: -0.27 },
+  { name: '科创50', name_en: 'STAR 50', code: '000688', price: 780.0, change_pct: 0.15 },
+  { name: '上证50', name_en: 'SSE 50', code: '000016', price: 2450.0, change_pct: 0.23 },
+  { name: '中证500', name_en: 'CSI 500', code: '000905', price: 5550.0, change_pct: -0.36 },
+  { name: '中证1000', name_en: 'CSI 1000', code: '000852', price: 6000.0, change_pct: 0.28 },
+]
+
 function readCachedIndices() {
   try {
     const cached = localStorage.getItem('keefoo_indices_cache')
-    if (!cached) return []
+    if (!cached) return DEFAULT_INDICES
     const parsed = JSON.parse(cached)
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_INDICES
   } catch {
-    return []
+    return DEFAULT_INDICES
   }
 }
 
