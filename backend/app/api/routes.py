@@ -869,6 +869,258 @@ def list_scenario_pushes(
     return out
 
 
+# --- Data Collection (第一层：信息采集) ---
+
+
+class CollectionResult(BaseModel):
+    user_id: str
+    assets_monitored: int
+    price_alerts: int
+    news_matched: int
+
+
+@router.post("/collect/user", response_model=CollectionResult)
+def trigger_collect_for_user(
+    user_id: uuid.UUID = Depends(get_effective_user_id),
+    db: Session = Depends(get_db),
+) -> CollectionResult:
+    """手动触发当前用户的第一层数据采集。"""
+    from app.services.data_collection_service import collect_for_user
+
+    user = db.query(m.User).filter(m.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    result = collect_for_user(db, user_id)
+    return CollectionResult(**result)
+
+
+class FilterResult(BaseModel):
+    user_id: str
+    events_evaluated: int
+    passed: int
+    filtered_out: int
+
+
+@router.post("/filter/user", response_model=FilterResult)
+def trigger_filter_for_user(
+    user_id: uuid.UUID = Depends(get_effective_user_id),
+    db: Session = Depends(get_db),
+) -> FilterResult:
+    """手动触发当前用户的第二层事件过滤。"""
+    from app.services.event_filter_service import filter_events_for_user
+
+    user = db.query(m.User).filter(m.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    result = filter_events_for_user(db, user_id)
+    return FilterResult(**result)
+
+
+@router.post("/filter/all", response_model=list[FilterResult])
+def trigger_filter_for_all(
+    db: Session = Depends(get_db),
+) -> list[FilterResult]:
+    """触发所有活跃用户的第二层事件过滤。"""
+    from app.services.event_filter_service import filter_events_for_all_users
+
+    results = filter_events_for_all_users()
+    return [FilterResult(**r) for r in results]
+
+
+@router.post("/collect/all", response_model=list[CollectionResult])
+def trigger_collect_for_all(
+    db: Session = Depends(get_db),
+) -> list[CollectionResult]:
+    """
+    触发所有活跃用户的第一层数据采集。
+    适合由定时任务或管理后台调用。
+    """
+    from app.services.data_collection_service import collect_for_all_users
+
+    results = collect_for_all_users()
+    return [CollectionResult(**r) for r in results]
+
+
+class EnrichResult(BaseModel):
+    user_id: str
+    cards_enriched: int
+    with_debate: int
+
+
+@router.post("/enrich/user", response_model=EnrichResult)
+def trigger_enrich_for_user(
+    user_id: uuid.UUID = Depends(get_effective_user_id),
+    db: Session = Depends(get_db),
+) -> EnrichResult:
+    """手动触发当前用户的第三层卡片充实（博弈分析）。"""
+    from app.services.card_enrichment_service import enrich_cards_for_user
+
+    user = db.query(m.User).filter(m.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    result = enrich_cards_for_user(db, user_id)
+    return EnrichResult(**result)
+
+
+class DispatchResult(BaseModel):
+    user_id: str
+    pushed: int
+    aggregated: int
+    remaining_quota: int
+
+
+class SocratesResult(BaseModel):
+    user_id: str
+    questions_sent: int
+
+
+class SilenceResult(BaseModel):
+    user_id: str
+    silence_inferred: int
+
+
+class PushLayerResult(BaseModel):
+    user_id: str
+    dispatch: DispatchResult
+    socrates: SocratesResult
+    silence: SilenceResult
+
+
+@router.post("/push/user", response_model=PushLayerResult)
+def trigger_push_for_user(
+    user_id: uuid.UUID = Depends(get_effective_user_id),
+    db: Session = Depends(get_db),
+) -> PushLayerResult:
+    """手动触发当前用户的第四层：推送频控 + 苏格拉底追问 + 沉默推断。"""
+    from app.services.push_service import run_push_layer_for_user
+
+    user = db.query(m.User).filter(m.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    result = run_push_layer_for_user(db, user_id)
+    return PushLayerResult(
+        user_id=result["user_id"],
+        dispatch=DispatchResult(**result["dispatch"]),
+        socrates=SocratesResult(**result["socrates"]),
+        silence=SilenceResult(**result["silence"]),
+    )
+
+
+class EvolutionResult(BaseModel):
+    user_id: str
+    daily_report: Optional[dict] = None
+    strategy_profile: Optional[dict] = None
+    shadow_match: Optional[dict] = None
+
+
+@router.post("/evolution/daily", response_model=dict)
+def trigger_daily_report(
+    user_id: uuid.UUID = Depends(get_effective_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """生成今日收盘日报。"""
+    from app.services.evolution_service import run_daily_report
+
+    user = db.query(m.User).filter(m.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return run_daily_report(db, user_id)
+
+
+@router.post("/evolution/report/{period}", response_model=dict)
+def trigger_period_report(
+    period: str,
+    user_id: uuid.UUID = Depends(get_effective_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """生成周报/月报/季报（统计 + AI 叙事）。"""
+    from app.services.evolution_service import run_period_report
+
+    if period not in ("weekly", "monthly", "quarterly"):
+        raise HTTPException(status_code=400, detail="period must be weekly/monthly/quarterly")
+    user = db.query(m.User).filter(m.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return run_period_report(db, user_id, period)
+
+
+@router.post("/evolution/profile", response_model=dict)
+def trigger_strategy_profile(
+    user_id: uuid.UUID = Depends(get_effective_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """生成策略画像（统计 + AI 叙事 + 偏差诊断）。"""
+    from app.services.evolution_service import run_strategy_profile
+
+    user = db.query(m.User).filter(m.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return run_strategy_profile(db, user_id)
+
+
+@router.post("/evolution/shadow-match", response_model=dict)
+def trigger_shadow_match(
+    user_id: uuid.UUID = Depends(get_effective_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """计算影子仓与真实操作的匹配系数。"""
+    from app.services.evolution_service import calculate_shadow_match
+
+    user = db.query(m.User).filter(m.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return calculate_shadow_match(db, user_id)
+
+
+class PipelineResult(BaseModel):
+    collection: CollectionResult
+    filter: FilterResult
+    enrichment: EnrichResult
+    push: PushLayerResult
+    evolution: Optional[EvolutionResult] = None
+
+
+@router.post("/pipeline/user", response_model=PipelineResult)
+def trigger_pipeline_for_user(
+    user_id: uuid.UUID = Depends(get_effective_user_id),
+    db: Session = Depends(get_db),
+) -> PipelineResult:
+    """一次性运行五层流水线：采集 → 过滤 → 博弈 → 推送追问 → 复盘进化（单用户）。"""
+    from app.services.data_collection_service import collect_for_user
+    from app.services.event_filter_service import filter_events_for_user
+    from app.services.card_enrichment_service import enrich_cards_for_user
+    from app.services.push_service import run_push_layer_for_user
+    from app.services.evolution_service import run_evolution_layer
+
+    user = db.query(m.User).filter(m.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    collect_result = collect_for_user(db, user_id)
+    filter_result = filter_events_for_user(db, user_id)
+    enrich_result = enrich_cards_for_user(db, user_id)
+    push_result = run_push_layer_for_user(db, user_id)
+    evolution_result = run_evolution_layer(db, user_id)
+
+    return PipelineResult(
+        collection=CollectionResult(**collect_result),
+        filter=FilterResult(**filter_result),
+        enrichment=EnrichResult(**enrich_result),
+        push=PushLayerResult(
+            user_id=push_result["user_id"],
+            dispatch=DispatchResult(**push_result["dispatch"]),
+            socrates=SocratesResult(**push_result["socrates"]),
+            silence=SilenceResult(**push_result["silence"]),
+        ),
+        evolution=EvolutionResult(
+            user_id=evolution_result["user_id"],
+            daily_report=evolution_result.get("daily_report"),
+            strategy_profile=evolution_result.get("strategy_profile"),
+            shadow_match=evolution_result.get("shadow_match"),
+        ),
+    )
+
+
 # --- Notes / Notebooks / Tags ---
 
 

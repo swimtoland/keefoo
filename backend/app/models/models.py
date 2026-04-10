@@ -345,6 +345,9 @@ class FeedCard(Base):
     related_asset_ids: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_pushed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # 第三层博弈分析结果（JSON）
+    card_content_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    is_enriched: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     user: Mapped["User"] = relationship(back_populates="feed_cards")
     event: Mapped["Event"] = relationship(back_populates="feed_cards")

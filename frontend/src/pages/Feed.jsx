@@ -66,8 +66,15 @@ export default function Feed() {
   const replyTextareaRef = useRef({})
   const [replyingId, setReplyingId] = useState(null)
 
-  const [indices, setIndices] = useState([])
-  const indicesRef = useRef([])
+  const [indices, setIndices] = useState(() => {
+    // 从 localStorage 读取缓存，消除首屏白屏延迟
+    try {
+      const cached = localStorage.getItem('keefoo_indices_cache')
+      if (cached) return JSON.parse(cached)
+    } catch {}
+    return []
+  })
+  const indicesRef = useRef(indices)
   const [news, setNews] = useState([])
   const [expandedNews, setExpandedNews] = useState({})
 
@@ -118,6 +125,8 @@ export default function Feed() {
         if (next.length > 0) {
           indicesRef.current = next
           setIndices(next)
+          // 写入 localStorage 作为下次首屏缓存
+          try { localStorage.setItem('keefoo_indices_cache', JSON.stringify(next)) } catch {}
         } else {
           setIndices(indicesRef.current || [])
         }
@@ -235,12 +244,9 @@ export default function Feed() {
 
   return (
     <div className="w-full max-w-full overflow-x-hidden px-6 py-4 text-[#1A1A1A] dark:text-zinc-100">
-      {/* 行情滚动栏：固定高度 + overflow-hidden */}
-      <div className="mb-4 w-full overflow-hidden border-b border-[#F0F0F0] dark:border-zinc-800" style={{ maxWidth: '100%' }}>
-        <div
-          className="inline-flex whitespace-nowrap py-3"
-          style={{ animation: 'marquee 40s linear infinite' }}
-        >
+      {/* 行情滚动栏：hover 暂停 + 可点击标的 */}
+      <div className="marquee mb-4 w-full overflow-hidden border-b border-[#F0F0F0] dark:border-zinc-800" style={{ maxWidth: '100%' }}>
+        <div className="marquee__track inline-flex whitespace-nowrap py-3">
           {Array.isArray(indices) && indices.length > 0 ? (
             [...indices, ...indices].map((idx, i) => {
               const toneCls = changeTone(idx.change_pct)
@@ -249,13 +255,19 @@ export default function Feed() {
               const changePct = Number(idx.change_pct)
               const changeText =
                 Number.isFinite(changePct) ? `${changePct >= 0 ? '+' : ''}${changePct}%` : '—'
+              const displayName = dateLocale === 'zh-CN' ? (idx.name || idx.name_en || idx.code) : (idx.name_en || idx.name || idx.code)
               return (
-                <div key={`${idx.code}-${i}`} className="inline-flex items-center gap-2 px-4">
+                <button
+                  key={`${idx.code}-${i}`}
+                  type="button"
+                  onClick={() => navigate(`/asset/${idx.code}`)}
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-md px-4 py-1 transition-colors hover:bg-[#F5F5F5] dark:hover:bg-zinc-800"
+                >
                   <span className="text-sm font-medium text-[#1A1A1A] dark:text-zinc-100">
-                    {idx.name_en || idx.name || idx.code}
+                    {displayName}
                   </span>
                   <span className="text-sm font-semibold tabular-nums text-[#1A1A1A] dark:text-zinc-100">
-                    {Number.isFinite(price) ? price.toLocaleString('zh-CN') : '—'}
+                    {Number.isFinite(price) ? price.toLocaleString(dateLocale) : '—'}
                   </span>
                   <span className={`inline-flex items-center gap-1.5 text-sm font-semibold ${toneCls}`}>
                     {Icon ? <Icon className="h-4 w-4" strokeWidth={2} aria-hidden /> : null}
@@ -264,12 +276,12 @@ export default function Feed() {
                   <span className="ml-2 text-[#DDD] dark:text-zinc-700" aria-hidden>
                     |
                   </span>
-                </div>
+                </button>
               )
             })
           ) : (
             <div className="inline-flex items-center gap-2 px-4 text-sm text-[#777] dark:text-zinc-400">
-              行情数据加载中...
+              {t('feed.tickerLoading')}
             </div>
           )}
         </div>
@@ -406,8 +418,8 @@ export default function Feed() {
           <div className="w-full max-w-full overflow-hidden rounded-2xl bg-white p-5 shadow-sm dark:bg-zinc-900">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <h3 className="truncate text-[13px] font-bold text-[#1A1A1A] dark:text-white">AI 情绪指数</h3>
-                <p className="mt-1 break-words text-[12px] text-[#888] dark:text-zinc-500">看多情绪 75% · 看空情绪 25%</p>
+                <h3 className="truncate text-[13px] font-bold text-[#1A1A1A] dark:text-white">{t('feed.aiSentiment')}</h3>
+                <p className="mt-1 break-words text-[12px] text-[#888] dark:text-zinc-500">{t('feed.bullish')} 75% · {t('feed.bearish')} 25%</p>
               </div>
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300">
                 <span className="text-[12px] font-bold">75</span>
@@ -417,13 +429,13 @@ export default function Feed() {
               <div className="h-full rounded-full bg-emerald-500 dark:bg-emerald-400" style={{ width: '75%' }} />
             </div>
             <div className="mt-3 flex items-center justify-between text-[11px] text-[#999] dark:text-zinc-500">
-              <span className="text-red-600 dark:text-red-400">看空</span>
-              <span className="text-emerald-600 dark:text-emerald-400">看多</span>
+              <span className="text-red-600 dark:text-red-400">{t('feed.bear')}</span>
+              <span className="text-emerald-600 dark:text-emerald-400">{t('feed.bull')}</span>
             </div>
           </div>
 
           <div className="w-full max-w-full overflow-hidden rounded-2xl bg-white p-5 shadow-sm dark:bg-zinc-900">
-            <h3 className="truncate text-[13px] font-bold text-[#1A1A1A] dark:text-white">待办复盘</h3>
+            <h3 className="truncate text-[13px] font-bold text-[#1A1A1A] dark:text-white">{t('feed.pendingReview')}</h3>
             <div className="mt-3 space-y-3">
               {[
                 {
@@ -474,8 +486,8 @@ export default function Feed() {
       {Array.isArray(news) && news.length > 0 && (
         <section className="mt-10 rounded-2xl bg-white p-5 shadow-sm dark:bg-zinc-900 dark:ring-1 dark:ring-zinc-800">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-[15px] font-bold text-[#1A1A1A] dark:text-white">市场快讯</h2>
-            <span className="text-[12px] text-[#999] dark:text-zinc-500">每 5 分钟更新</span>
+            <h2 className="text-[15px] font-bold text-[#1A1A1A] dark:text-white">{t('feed.newsTitle')}</h2>
+            <span className="text-[12px] text-[#999] dark:text-zinc-500">{t('feed.newsRefresh')}</span>
           </div>
           <ul className="space-y-3">
             {news.map((n, i) => {
