@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
@@ -13,6 +14,8 @@ from app.services import tushare_service
 
 _cache: dict[str, dict[str, Any]] = {}
 _executor = ThreadPoolExecutor(max_workers=4)
+_cache_lock = threading.Lock()
+_refreshing_keys: set[str] = set()
 
 
 def _run_with_timeout(fetch_fn: Callable[[], Any], timeout_seconds: float) -> Any:
@@ -20,24 +23,85 @@ def _run_with_timeout(fetch_fn: Callable[[], Any], timeout_seconds: float) -> An
     return fut.result(timeout=timeout_seconds)
 
 
-def cached(key: str, ttl_seconds: int, fetch_fn: Callable[[], Any], *, max_wait_seconds: float = 8.0):
-    """简易缓存：key 存在且未过期则返回缓存，否则调用 fetch_fn 获取新数据。"""
+def _get_cache_entry(key: str) -> Optional[dict[str, Any]]:
+    with _cache_lock:
+        return _cache.get(key)
+
+
+def _set_cache_entry(key: str, data: Any) -> None:
+    with _cache_lock:
+        _cache[key] = {"data": data, "time": time.time()}
+
+
+def _begin_refresh(key: str) -> bool:
+    with _cache_lock:
+        if key in _refreshing_keys:
+            return False
+        _refreshing_keys.add(key)
+        return True
+
+
+def _end_refresh(key: str) -> None:
+    with _cache_lock:
+        _refreshing_keys.discard(key)
+
+
+def _refresh_cache_in_background(
+    key: str,
+    fetch_fn: Callable[[], Any],
+    *,
+    max_wait_seconds: float,
+) -> None:
+    if not _begin_refresh(key):
+        return
+
+    def _job() -> None:
+        try:
+            data = _run_with_timeout(fetch_fn, max_wait_seconds)
+            _set_cache_entry(key, data)
+        except FutureTimeout:
+            print(f"AKShare timeout for {key} (> {max_wait_seconds}s)")
+        except Exception as e:
+            print(f"AKShare error for {key}: {e}")
+        finally:
+            _end_refresh(key)
+
+    _executor.submit(_job)
+
+
+def cached(
+    key: str,
+    ttl_seconds: int,
+    fetch_fn: Callable[[], Any],
+    *,
+    max_wait_seconds: float = 8.0,
+    stale_while_revalidate: bool = False,
+):
+    """简易缓存：命中直接返回；可选 stale-while-revalidate 避免过期后阻塞首个请求。"""
     now = time.time()
-    if key in _cache and now - float(_cache[key]["time"]) < ttl_seconds:
-        return _cache[key]["data"]
+    entry = _get_cache_entry(key)
+    if entry and now - float(entry["time"]) < ttl_seconds:
+        return entry["data"]
+
+    if stale_while_revalidate and entry:
+        _refresh_cache_in_background(key, fetch_fn, max_wait_seconds=max_wait_seconds)
+        return entry["data"]
+
     try:
         data = _run_with_timeout(fetch_fn, max_wait_seconds)
-        _cache[key] = {"data": data, "time": now}
+        _set_cache_entry(key, data)
         return data
     except FutureTimeout:
         print(f"AKShare timeout for {key} (> {max_wait_seconds}s)")
-        if key in _cache:
-            return _cache[key]["data"]
+        entry = _get_cache_entry(key)
+        if entry:
+            return entry["data"]
         return None
     except Exception as e:
         print(f"AKShare error for {key}: {e}")
-        if key in _cache:
-            return _cache[key]["data"]
+        entry = _get_cache_entry(key)
+        if entry:
+            return entry["data"]
         return None
 
 
@@ -248,7 +312,7 @@ def get_market_indices() -> list[dict]:
             )
         return out
 
-    data = cached("indices", ttl, _fetch, max_wait_seconds=8.0)
+    data = cached("indices", ttl, _fetch, max_wait_seconds=8.0, stale_while_revalidate=True)
     return data or _fallback_indices()
 
 
@@ -518,4 +582,3 @@ def get_stock_info(code: str) -> dict:
 
     data = cached(f"stock-info:{symbol}", 3600, _fetch, max_wait_seconds=10.0)
     return data or _fallback_stock_info(symbol)
-

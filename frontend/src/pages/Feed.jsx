@@ -14,6 +14,17 @@ import { useAuth } from '../contexts/AuthContext.jsx'
 import { useUiPreferences } from '../contexts/UiPreferencesContext.jsx'
 import { useToast } from '../components/Toast.jsx'
 
+function readCachedIndices() {
+  try {
+    const cached = localStorage.getItem('keefoo_indices_cache')
+    if (!cached) return []
+    const parsed = JSON.parse(cached)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 function formatWhen(iso, dateLocale) {
   if (!iso) return '—'
   try {
@@ -66,14 +77,7 @@ export default function Feed() {
   const replyTextareaRef = useRef({})
   const [replyingId, setReplyingId] = useState(null)
 
-  const [indices, setIndices] = useState(() => {
-    // 从 localStorage 读取缓存，消除首屏白屏延迟
-    try {
-      const cached = localStorage.getItem('keefoo_indices_cache')
-      if (cached) return JSON.parse(cached)
-    } catch {}
-    return []
-  })
+  const [indices, setIndices] = useState(() => readCachedIndices())
   const indicesRef = useRef(indices)
   const [news, setNews] = useState([])
   const [expandedNews, setExpandedNews] = useState({})
@@ -114,8 +118,6 @@ export default function Feed() {
 
   useEffect(() => {
     let cancelled = false
-    indicesRef.current = []
-    setIndices([])
 
     async function refresh() {
       try {
