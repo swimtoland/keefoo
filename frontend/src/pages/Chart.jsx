@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Bold,
   Bot,
@@ -113,7 +114,7 @@ function loadLightweightCharts() {
     const script = document.createElement('script')
     script.dataset.lc = '1'
     script.src =
-      'https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js'
+      'https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js'
     script.async = true
     script.onload = () => resolve(window.LightweightCharts)
     script.onerror = () => reject(new Error('Failed to load charts script'))
@@ -132,6 +133,7 @@ function insertMarkdown(text, selectionStart, selectionEnd, before, after) {
 }
 
 export default function Chart() {
+  const [searchParams] = useSearchParams()
   const { user } = useAuth()
   const userId = user?.id
   const { t, dateLocale } = useUiPreferences()
@@ -184,6 +186,14 @@ export default function Chart() {
     setMarketName('贵州茅台')
     setPeriod('daily')
   }, [])
+
+  useEffect(() => {
+    const code = String(searchParams.get('code') || '').trim()
+    const name = String(searchParams.get('name') || '').trim()
+    if (!code) return
+    setMarketCode(code)
+    if (name) setMarketName(name)
+  }, [searchParams])
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -263,7 +273,7 @@ export default function Chart() {
         const script = document.createElement('script')
         script.id = 'tv-lw-charts'
         script.src =
-          'https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js'
+          'https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js'
         script.onload = renderChart
         document.head.appendChild(script)
       } else {
@@ -881,4 +891,3 @@ export default function Chart() {
     </div>
   )
 }
-

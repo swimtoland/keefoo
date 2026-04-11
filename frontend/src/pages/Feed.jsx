@@ -273,7 +273,11 @@ export default function Feed() {
                 <button
                   key={`${idx.code}-${i}`}
                   type="button"
-                  onClick={() => navigate(`/asset/${idx.code}`)}
+                  onClick={() =>
+                    navigate(
+                      `/chart?code=${encodeURIComponent(idx.code)}&name=${encodeURIComponent(displayName)}`,
+                    )
+                  }
                   className="inline-flex cursor-pointer items-center gap-2 rounded-md px-4 py-1 transition-colors hover:bg-[#F5F5F5] dark:hover:bg-zinc-800"
                 >
                   <span className="text-sm font-medium text-[#1A1A1A] dark:text-zinc-100">
